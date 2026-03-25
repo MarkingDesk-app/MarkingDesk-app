@@ -155,7 +155,7 @@ export default async function ModulePage({ params }: ModulePageProps) {
               instance.markerAssignments.some((assignment) => assignment.userId === session.user.id)
           ),
     }))
-    .filter((template) => template.assessmentInstances.length > 0);
+    .filter((template) => canManageModule || template.assessmentInstances.length > 0);
 
   const archivedAssessmentTemplates = canManageModule
     ? moduleRecord.assessmentTemplates.filter((template) => template.isArchived)

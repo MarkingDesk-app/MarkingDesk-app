@@ -155,7 +155,7 @@ export async function createAssessmentAction(input: {
     revalidatePath(`/modules/${moduleId}`);
     revalidatePath("/dashboard");
 
-    return { ok: true, message: "Assessment saved." };
+    return { ok: true, message: "Assessment created. Add an academic year to finish setup." };
   } catch (error) {
     return {
       ok: false,
