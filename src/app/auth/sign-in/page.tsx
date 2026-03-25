@@ -20,6 +20,9 @@ export default async function SignInPage() {
             <ShieldCheck className="h-6 w-6 text-blue-600" />
             Marking Manager
           </h1>
+          <p className="mt-2 text-sm text-slate-700">
+            Built by Dr Bradley Kennedy - <a href="https://apps.bradk.co.uk" className="text-blue-600 hover:underline">Learn more.</a>
+          </p>
         </div>
 
         <Card>
