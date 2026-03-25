@@ -67,17 +67,7 @@ function brandSubject(subject: string): string {
 }
 
 function brandMessage(message: string): string {
-  const trimmedMessage = message.trim();
-
-  return [
-    `${APP_NAME} notification`,
-    "",
-    "This message was sent by MarkingDesk.",
-    "The sending email address may use another domain, but this notification relates to your MarkingDesk account and workflow.",
-    `App: ${getAppUrl()}`,
-    "",
-    trimmedMessage,
-  ].join("\n");
+  return message.trim();
 }
 
 function getEmailLogoUrl(): string {
