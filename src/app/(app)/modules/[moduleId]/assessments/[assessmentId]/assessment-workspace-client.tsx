@@ -89,6 +89,19 @@ function areEqualGradeValues(left: string, right: string): boolean {
   return left.trim() === right.trim();
 }
 
+function uniqueIdsInOrder(ids: string[]): string[] {
+  const seen = new Set<string>();
+
+  return ids.filter((id) => {
+    if (seen.has(id)) {
+      return false;
+    }
+
+    seen.add(id);
+    return true;
+  });
+}
+
 function moderationStatusFromLabel(statusLabel: string): ModerationStatus {
   if (statusLabel === "Minor adjustments required") {
     return ModerationStatus.MINOR_ADJUSTMENTS_REQUIRED;
@@ -173,6 +186,28 @@ export function AssessmentWorkspaceClient({
 
   const showToast = (tone: "success" | "error", message: string) => {
     setToast({ tone, message });
+  };
+
+  const rewriteImportTextWithIds = (ids: string[]) => {
+    setImportText(ids.join("\n"));
+    setImportError(null);
+  };
+
+  const handleRemoveDuplicateEntries = () => {
+    rewriteImportTextWithIds(uniqueIdsInOrder(extractedIds));
+    showToast("success", "Duplicate IDs removed from the import list.");
+  };
+
+  const handleRemoveExistingIds = () => {
+    rewriteImportTextWithIds(extractedIds.filter((turnitinId) => !existingTurnitinIdSet.has(turnitinId)));
+    showToast("success", "Existing IDs removed from the import list.");
+  };
+
+  const handleKeepOnlyNewUniqueIds = () => {
+    rewriteImportTextWithIds(
+      uniqueIdsInOrder(extractedIds).filter((turnitinId) => !existingTurnitinIdSet.has(turnitinId))
+    );
+    showToast("success", "Import list cleaned up.");
   };
 
   const toggleSelectAll = () => {
@@ -598,14 +633,34 @@ export function AssessmentWorkspaceClient({
           </div>
 
           {duplicateIdsInPaste.length > 0 ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              Duplicate IDs in pasted text: {duplicateIdsInPaste.join(", ")}
+            <div className="space-y-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <p>Duplicate IDs in pasted text: {duplicateIdsInPaste.join(", ")}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" size="sm" onClick={handleRemoveDuplicateEntries}>
+                  Remove duplicate entries
+                </Button>
+                {existingDuplicateIds.length > 0 ? (
+                  <Button type="button" variant="secondary" size="sm" onClick={handleKeepOnlyNewUniqueIds}>
+                    Keep only new unique IDs
+                  </Button>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
           {existingDuplicateIds.length > 0 ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              These IDs already exist in this assessment: {existingDuplicateIds.join(", ")}
+            <div className="space-y-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <p>These IDs already exist in this assessment: {existingDuplicateIds.join(", ")}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" size="sm" onClick={handleRemoveExistingIds}>
+                  Remove existing IDs
+                </Button>
+                {duplicateIdsInPaste.length > 0 ? (
+                  <Button type="button" variant="secondary" size="sm" onClick={handleKeepOnlyNewUniqueIds}>
+                    Keep only new unique IDs
+                  </Button>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
