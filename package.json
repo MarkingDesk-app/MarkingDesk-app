@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "build:vercel": "prisma migrate deploy && prisma generate && next build",
     "start": "next start",
     "test": "tsx --test src/**/*.test.ts",
     "lint": "eslint",
