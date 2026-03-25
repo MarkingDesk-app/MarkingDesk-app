@@ -121,6 +121,12 @@ function areEqualGradeValues(left: string, right: string): boolean {
   return left.trim() === right.trim();
 }
 
+function isScriptMarked(script: ScriptRow, gradeInputs: Record<string, string>): boolean {
+  const pendingGradeValue = gradeInputs[script.id];
+  const effectiveValue = pendingGradeValue ?? formatGradeValue(script.grade);
+  return effectiveValue.trim() !== "";
+}
+
 function uniqueIdsInOrder(ids: string[]): string[] {
   const seen = new Set<string>();
 
@@ -324,14 +330,15 @@ export function AssessmentWorkspaceClient({
     visibleScripts.some((script) => script.id === id)
   );
   const totalScriptCount = scripts.length;
-  const markedScriptCount = scripts.filter((script) => {
-    const pendingGradeValue = gradeInputs[script.id];
-    const effectiveValue = pendingGradeValue ?? formatGradeValue(script.grade);
-    return effectiveValue.trim() !== "";
-  }).length;
+  const markedScriptCount = scripts.filter((script) => isScriptMarked(script, gradeInputs)).length;
+  const myAllocatedScriptCount = myAllocatedScripts.length;
+  const myMarkedScriptCount = myAllocatedScripts.filter((script) => isScriptMarked(script, gradeInputs)).length;
   const allSelected = visibleScripts.length > 0 && visibleSelectedScriptIds.length === visibleScripts.length;
   const remainingScripts = totalScriptCount - markedScriptCount;
+  const myRemainingScripts = myAllocatedScriptCount - myMarkedScriptCount;
   const progressPercentage = totalScriptCount === 0 ? 0 : Math.round((markedScriptCount / totalScriptCount) * 100);
+  const myProgressPercentage =
+    myAllocatedScriptCount === 0 ? 0 : Math.round((myMarkedScriptCount / myAllocatedScriptCount) * 100);
   const allocationTotal = useMemo(
     () =>
       markerOptions.reduce(
@@ -739,7 +746,7 @@ export function AssessmentWorkspaceClient({
       <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>
           <CardHeader>
-            <CardTitle className="text-xl">Marking Progress</CardTitle>
+            <CardTitle className="text-xl">Overall Marking Progress</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-baseline justify-between gap-3">
@@ -758,6 +765,35 @@ export function AssessmentWorkspaceClient({
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl">Your Allocation Progress</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {myAllocatedScriptCount > 0 ? (
+              <>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-3xl font-semibold tracking-tight text-slate-950">
+                    {myMarkedScriptCount}/{myAllocatedScriptCount}
+                  </p>
+                  <p className="text-sm text-slate-500">marked</p>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-emerald-600 transition-[width]"
+                    style={{ width: `${myProgressPercentage}%` }}
+                  />
+                </div>
+                <p className="text-sm text-slate-600">{myRemainingScripts} still on your list.</p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-600">No scripts allocated to you.</p>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4">
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-4">
             <div>
