@@ -281,7 +281,7 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
                         Next Deadline
                       </p>
                       <div className="mt-2 flex items-start gap-3 text-sm text-slate-600">
-                        <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                        <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600 2xl:hidden" />
                         <div className="min-w-0 space-y-1 text-sm leading-snug text-slate-600">
                           <p className="break-words">{module.nextDeadline}</p>
                           <p className="break-words">{module.assessments} assessments</p>
