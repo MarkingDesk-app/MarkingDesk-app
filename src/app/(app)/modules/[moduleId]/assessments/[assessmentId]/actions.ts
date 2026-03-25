@@ -663,5 +663,3 @@ export async function saveAssessmentModerationAction(input: {
     };
   }
 }
-
-export type { ActionResult };

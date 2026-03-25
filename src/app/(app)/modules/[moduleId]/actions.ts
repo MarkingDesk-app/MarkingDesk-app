@@ -265,5 +265,3 @@ export async function deactivateModuleMembershipAction(input: {
     };
   }
 }
-
-export type { ActionResult };
