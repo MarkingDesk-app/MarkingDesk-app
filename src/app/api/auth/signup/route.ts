@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
           name,
           email,
           passwordHash,
-          role: Role.MARKER,
+          role: Role.USER,
         },
         select: { id: true },
       });

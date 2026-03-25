@@ -3,7 +3,6 @@
 import {
   AuditAction,
   ModerationStatus,
-  ModuleRole,
   Role,
   ScriptStatus,
   SubmissionType,
@@ -43,8 +42,18 @@ type AssessmentContext = {
   assessmentId: string;
   isAdmin: boolean;
   isModuleLeader: boolean;
-  isModerator: boolean;
 };
+
+function parseDateTimeInput(value: string): Date | null {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 async function getAssessmentContext(moduleId: string, assessmentId: string): Promise<AssessmentContext> {
   const session = await getServerSession(authOptions);
@@ -80,7 +89,6 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
       assessmentId,
       isAdmin: true,
       isModuleLeader: true,
-      isModerator: true,
     };
   }
 
@@ -90,7 +98,7 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
       userId: session.user.id,
       active: true,
     },
-    select: { role: true },
+    select: { isLeader: true },
   });
 
   if (memberships.length === 0) {
@@ -104,8 +112,7 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
     moduleId,
     assessmentId,
     isAdmin: false,
-    isModuleLeader: memberships.some((membership) => membership.role === ModuleRole.MODULE_LEADER),
-    isModerator: memberships.some((membership) => membership.role === ModuleRole.MODERATOR),
+    isModuleLeader: memberships.some((membership) => membership.isLeader),
   };
 }
 
@@ -113,6 +120,110 @@ function revalidateAssessmentPaths(moduleId: string, assessmentId: string) {
   revalidatePath(`/modules/${moduleId}`);
   revalidatePath(`/modules/${moduleId}/assessments/${assessmentId}`);
   revalidatePath("/dashboard");
+}
+
+export async function updateAssessmentSettingsAction(input: {
+  moduleId: string;
+  assessmentId: string;
+  opensAt?: string;
+  dueAt: string;
+  markingDeadlineAt: string;
+  moderatorUserId?: string;
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentId = input.assessmentId.trim();
+    const opensAt = parseDateTimeInput(input.opensAt ?? "");
+    const dueAt = parseDateTimeInput(input.dueAt);
+    const markingDeadlineAt = parseDateTimeInput(input.markingDeadlineAt);
+    const moderatorUserId = input.moderatorUserId?.trim() || null;
+
+    if (!dueAt || !markingDeadlineAt) {
+      return { ok: false, error: "Due date and marking deadline are required." };
+    }
+
+    if (markingDeadlineAt < dueAt) {
+      return { ok: false, error: "Marking deadline cannot be earlier than the due date." };
+    }
+
+    const context = await getAssessmentContext(moduleId, assessmentId);
+
+    if (!context.isAdmin && !context.isModuleLeader) {
+      return { ok: false, error: "Only module leaders can edit assessment settings." };
+    }
+
+    const assessment = await prisma.assessmentInstance.findUnique({
+      where: { id: assessmentId },
+      select: {
+        id: true,
+        assessmentTemplate: {
+          select: {
+            moduleId: true,
+          },
+        },
+        opensAt: true,
+        dueAt: true,
+        markingDeadlineAt: true,
+        moderatorUserId: true,
+      },
+    });
+
+    if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
+      return { ok: false, error: "Assessment not found." };
+    }
+
+    if (moderatorUserId) {
+      const moderatorMembership = await prisma.moduleMembership.findFirst({
+        where: {
+          moduleId,
+          userId: moderatorUserId,
+          active: true,
+        },
+        select: { id: true },
+      });
+
+      if (!moderatorMembership) {
+        return { ok: false, error: "Select an active module member as moderator." };
+      }
+    }
+
+    await prisma.assessmentInstance.update({
+      where: { id: assessmentId },
+      data: {
+        opensAt,
+        dueAt,
+        markingDeadlineAt,
+        moderatorUserId,
+      },
+    });
+
+    await recordAuditLog({
+      actorUserId: context.sessionUserId,
+      entityType: "AssessmentInstance",
+      entityId: assessmentId,
+      action: AuditAction.UPDATE,
+      diff: {
+        operation: "update_assessment_settings",
+        opensAtBefore: assessment.opensAt,
+        opensAtAfter: opensAt,
+        dueAtBefore: assessment.dueAt,
+        dueAtAfter: dueAt,
+        markingDeadlineAtBefore: assessment.markingDeadlineAt,
+        markingDeadlineAtAfter: markingDeadlineAt,
+        moderatorUserIdBefore: assessment.moderatorUserId,
+        moderatorUserIdAfter: moderatorUserId,
+      },
+    });
+
+    revalidateAssessmentPaths(moduleId, assessmentId);
+
+    return { ok: true, message: "Assessment settings updated." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to update assessment settings.",
+    };
+  }
 }
 
 export async function importAssessmentSubmissionsAction(input: {
@@ -273,15 +384,12 @@ export async function saveScriptAllocationAction(input: {
         moduleId,
         userId: markerUserId,
         active: true,
-        role: {
-          in: [ModuleRole.MARKER, ModuleRole.MODULE_LEADER],
-        },
       },
       select: { id: true },
     });
 
     if (!markerMembership) {
-      return { ok: false, error: "Select an active marker from the module team." };
+      return { ok: false, error: "Select an active module member." };
     }
 
     const allocation = await prisma.allocation.upsert({
@@ -335,9 +443,6 @@ export async function autoAssignUnallocatedScriptsAction(input: {
       where: {
         moduleId,
         active: true,
-        role: {
-          in: [ModuleRole.MARKER, ModuleRole.MODULE_LEADER],
-        },
       },
       select: { userId: true },
     });
@@ -564,7 +669,7 @@ export async function saveAssessmentModerationAction(input: {
                 title: true,
                 memberships: {
                   where: {
-                    role: ModuleRole.MODULE_LEADER,
+                    isLeader: true,
                     active: true,
                   },
                   select: {

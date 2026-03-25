@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, ShieldCheck, SquareLibrary } from "lucide-react";
+import { LayoutDashboard, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -16,7 +16,6 @@ const navLinkBase =
 export function AppTopNav({ isAdmin }: AppTopNavProps) {
   const pathname = usePathname();
   const isDashboardArea = pathname === "/dashboard";
-  const isModuleArea = pathname.startsWith("/modules");
   const isAdminArea = pathname === "/admin";
 
   return (
@@ -34,17 +33,6 @@ export function AppTopNav({ isAdmin }: AppTopNavProps) {
       >
         <LayoutDashboard className="h-4 w-4" />
         Dashboard
-      </Link>
-      <Link
-        href="/dashboard#modules"
-        className={cn(
-          navLinkBase,
-          isModuleArea ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-        )}
-        aria-current={isModuleArea ? "page" : undefined}
-      >
-        <SquareLibrary className="h-4 w-4" />
-        Modules
       </Link>
       {isAdmin ? (
         <Link

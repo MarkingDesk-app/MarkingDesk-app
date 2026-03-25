@@ -1,4 +1,4 @@
-import { ModuleRole, Role } from "@prisma/client";
+import { Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 
@@ -6,24 +6,11 @@ import { AssessmentWorkspaceClient } from "./assessment-workspace-client";
 import { formatModerationStatus } from "@/lib/assessment-utils";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/user-display";
 
 type AssessmentPageProps = {
   params: Promise<{ moduleId: string; assessmentId: string }>;
 };
-
-function getDisplayName(user: { name: string; email?: string | null }): string {
-  const trimmedName = user.name.trim();
-
-  if (trimmedName) {
-    return trimmedName;
-  }
-
-  if (user.email) {
-    return user.email.split("@")[0] || "Unnamed user";
-  }
-
-  return "Unnamed user";
-}
 
 function formatDateTime(date: Date | null): string {
   if (!date) {
@@ -35,6 +22,26 @@ function formatDateTime(date: Date | null): string {
     timeStyle: "short",
     timeZone: "Europe/London",
   }).format(date);
+}
+
+function formatDateTimeLocalInput(date: Date | null): string {
+  if (!date) {
+    return "";
+  }
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return `${byType.year}-${byType.month}-${byType.day}T${byType.hour}:${byType.minute}`;
 }
 
 export default async function AssessmentPage({ params }: AssessmentPageProps) {
@@ -100,11 +107,12 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
           id: true,
           name: true,
           email: true,
-          role: true,
+          passwordHash: true,
+          emailVerified: true,
         },
       },
     },
-    orderBy: [{ role: "asc" }, { user: { name: "asc" } }, { user: { email: "asc" } }],
+    orderBy: [{ isLeader: "desc" }, { user: { name: "asc" } }, { user: { email: "asc" } }],
   });
 
   const isAdmin = session.user.role === Role.ADMIN;
@@ -114,22 +122,40 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
     notFound();
   }
 
-  const isModuleLeader = isAdmin || currentMemberships.some((membership) => membership.role === ModuleRole.MODULE_LEADER);
+  const isModuleLeader = isAdmin || currentMemberships.some((membership) => membership.isLeader);
   const canManageAssessment = isAdmin || isModuleLeader;
   const canSubmitModeration = assessment.moderatorUserId === session.user.id;
   const workspaceVersion = assessment.scripts
     .map((script) => `${script.id}:${script.version}:${script.allocation?.markerUserId ?? ""}`)
     .join("|");
   const markerOptions = moduleMemberships
-    .filter((membership) => membership.role === ModuleRole.MARKER || membership.role === ModuleRole.MODULE_LEADER)
     .map((membership) => ({
       id: membership.user.id,
-      displayName: getDisplayName(membership.user),
+      name: getDisplayName(membership.user),
+      email: membership.user.email,
+      meta: [
+        membership.isLeader ? "Module leader" : null,
+        membership.user.passwordHash && membership.user.emailVerified ? null : "Invitation pending",
+      ]
+        .filter(Boolean)
+        .join(" · ") || undefined,
+    }));
+  const moderatorOptions = moduleMemberships
+    .map((membership) => ({
+      id: membership.user.id,
+      name: getDisplayName(membership.user),
+      email: membership.user.email,
+      meta: [
+        membership.isLeader ? "Module leader" : null,
+        membership.user.passwordHash && membership.user.emailVerified ? null : "Invitation pending",
+      ]
+        .filter(Boolean)
+        .join(" · ") || undefined,
     }));
 
   return (
     <AssessmentWorkspaceClient
-      key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}`}
+      key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}:${assessment.dueAt.getTime()}:${assessment.markingDeadlineAt.getTime()}:${assessment.opensAt?.getTime() ?? 0}:${assessment.moderatorUserId ?? ""}`}
       moduleId={moduleId}
       assessmentId={assessmentId}
       moduleCode={assessment.assessmentTemplate.module.code}
@@ -140,6 +166,11 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
       canManageAssessment={canManageAssessment}
       canSubmitModeration={canSubmitModeration}
       markerOptions={markerOptions}
+      moderatorOptions={moderatorOptions}
+      opensAtInput={formatDateTimeLocalInput(assessment.opensAt)}
+      dueAtInput={formatDateTimeLocalInput(assessment.dueAt)}
+      markingDeadlineAtInput={formatDateTimeLocalInput(assessment.markingDeadlineAt)}
+      currentModeratorUserId={assessment.moderatorUserId ?? ""}
       scripts={assessment.scripts.map((script) => ({
         id: script.id,
         turnitinId: script.turnitinId,
@@ -150,6 +181,7 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         markerName: script.allocation?.marker ? getDisplayName(script.allocation.marker) : null,
         canMark:
           isAdmin || isModuleLeader || (script.allocation?.markerUserId ?? null) === session.user.id,
+        assignedToCurrentUser: (script.allocation?.markerUserId ?? null) === session.user.id,
         hasIntegrityFlag: Boolean(script.integrityFlag),
         hasReviewFlag: script.status === "UNDER_REVIEW",
       }))}

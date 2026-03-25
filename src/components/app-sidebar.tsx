@@ -4,14 +4,13 @@ import Link from "next/link";
 import { BookOpenCheck, LayoutDashboard, ShieldCheck } from "lucide-react";
 import { usePathname } from "next/navigation";
 
-import { RoleBadge } from "@/components/role-badge";
 import { cn } from "@/lib/utils";
 
 export type SidebarModule = {
   id: string;
   code: string;
   title: string;
-  role: "MARKER" | "MODULE_LEADER" | "MODERATOR" | "ADMIN";
+  isLeader?: boolean;
 };
 
 type AppSidebarProps = {
@@ -67,21 +66,25 @@ export function AppSidebar({ isAdmin, modules }: AppSidebarProps) {
           {modules.length > 0 ? (
             modules.map((module) => (
               <Link
-                key={`${module.id}-${module.role}`}
+                key={module.id}
                 href={`/modules/${module.id}`}
                 className={cn(
                   "block rounded-lg border border-slate-200 p-3 transition",
                   pathname.startsWith(`/modules/${module.id}`) ? "border-blue-200 bg-blue-50" : "hover:bg-slate-50"
                 )}
-              >
-                <p className="flex items-center gap-2 text-sm font-medium text-slate-900">
-                  <BookOpenCheck className="h-4 w-4 text-blue-600" />
-                  {module.code}
-                </p>
-                <p className="mt-1 line-clamp-1 text-xs text-slate-600">{module.title}</p>
-                <div className="mt-2">
-                  <RoleBadge role={module.role} />
-                </div>
+                >
+                  <p className="flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <BookOpenCheck className="h-4 w-4 text-blue-600" />
+                    {module.code}
+                  </p>
+                  <p className="mt-1 line-clamp-1 text-xs text-slate-600">{module.title}</p>
+                  {module.isLeader ? (
+                    <div className="mt-2">
+                      <span className="inline-flex items-center rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
+                        Module leader
+                      </span>
+                    </div>
+                  ) : null}
               </Link>
             ))
           ) : (

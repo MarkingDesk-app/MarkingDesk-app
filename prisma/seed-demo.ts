@@ -1,7 +1,6 @@
 import {
   IntegrityStatus,
   IntegrityVisibility,
-  ModuleRole,
   ModerationStatus,
   PrismaClient,
   Role,
@@ -16,10 +15,10 @@ const DEMO_PASSWORD = "DemoPass123!";
 
 const demoUsers = [
   { email: "demo.admin@markingdesk.test", name: "Demo Admin", role: Role.ADMIN },
-  { email: "demo.leader@markingdesk.test", name: "Demo Module Leader", role: Role.MODULE_LEADER },
-  { email: "demo.marker@markingdesk.test", name: "Demo Marker", role: Role.MARKER },
-  { email: "demo.moderator@markingdesk.test", name: "Demo Moderator", role: Role.MODERATOR },
-  { email: "demo.monitor@markingdesk.test", name: "Demo Monitor", role: Role.MODERATOR },
+  { email: "demo.leader@markingdesk.test", name: "Demo Module Leader", role: Role.USER },
+  { email: "demo.marker@markingdesk.test", name: "Demo Marker", role: Role.USER },
+  { email: "demo.second-marker@markingdesk.test", name: "Demo Second Marker", role: Role.USER },
+  { email: "demo.moderator@markingdesk.test", name: "Demo Moderator", role: Role.USER },
 ] as const;
 
 async function main() {
@@ -56,30 +55,33 @@ async function main() {
   });
 
   const membershipPlan = [
-    { email: "demo.leader@markingdesk.test", role: ModuleRole.MODULE_LEADER },
-    { email: "demo.marker@markingdesk.test", role: ModuleRole.MARKER },
-    { email: "demo.moderator@markingdesk.test", role: ModuleRole.MODERATOR },
-    { email: "demo.monitor@markingdesk.test", role: ModuleRole.MODERATOR },
+    { email: "demo.leader@markingdesk.test", isLeader: true },
+    { email: "demo.marker@markingdesk.test", isLeader: false },
+    { email: "demo.second-marker@markingdesk.test", isLeader: false },
+    { email: "demo.moderator@markingdesk.test", isLeader: false },
   ] as const;
 
   await Promise.all(
     membershipPlan.map(async (membership) => {
       const user = byEmail.get(membership.email);
       if (!user) return;
+
       await prisma.moduleMembership.upsert({
         where: {
-          userId_moduleId_role: {
+          userId_moduleId: {
             userId: user.id,
             moduleId: moduleRecord.id,
-            role: membership.role,
           },
         },
-        update: { active: true },
+        update: {
+          active: true,
+          isLeader: membership.isLeader,
+        },
         create: {
           userId: user.id,
           moduleId: moduleRecord.id,
-          role: membership.role,
           active: true,
+          isLeader: membership.isLeader,
         },
       });
     })
@@ -171,6 +173,7 @@ async function main() {
   ] as const;
 
   const scripts = [];
+
   for (const row of demoScripts) {
     const student = await prisma.student.upsert({
       where: { studentNumber: row.studentNumber },
@@ -186,9 +189,10 @@ async function main() {
         },
       },
       update: {
-        externalUrl: row.externalUrl,
+        studentId: student.id,
         turnitinId: row.turnitinId,
         submissionType: row.submissionType,
+        externalUrl: row.externalUrl,
       },
       create: {
         assessmentInstanceId: assessment.id,
@@ -202,18 +206,24 @@ async function main() {
     scripts.push(script);
   }
 
-  const marker = byEmail.get("demo.marker@markingdesk.test");
   const leader = byEmail.get("demo.leader@markingdesk.test");
-  if (marker && leader) {
-    for (let i = 0; i < scripts.length; i += 1) {
-      const script = scripts[i];
-      const markerUserId = i % 2 === 0 ? marker.id : leader.id;
-      await prisma.allocation.upsert({
-        where: { scriptId: script.id },
-        update: { markerUserId },
-        create: { scriptId: script.id, markerUserId },
-      });
+  const marker = byEmail.get("demo.marker@markingdesk.test");
+  const secondMarker = byEmail.get("demo.second-marker@markingdesk.test");
+  const allocationTargets = [leader?.id, marker?.id, secondMarker?.id].filter(Boolean) as string[];
+
+  for (let index = 0; index < scripts.length; index += 1) {
+    const script = scripts[index];
+    const markerUserId = allocationTargets[index % allocationTargets.length];
+
+    if (!markerUserId) {
+      continue;
     }
+
+    await prisma.allocation.upsert({
+      where: { scriptId: script.id },
+      update: { markerUserId },
+      create: { scriptId: script.id, markerUserId },
+    });
   }
 
   if (scripts[0]) {

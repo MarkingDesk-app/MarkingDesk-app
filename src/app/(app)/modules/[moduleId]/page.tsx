@@ -1,4 +1,4 @@
-import { ModuleRole, Role } from "@prisma/client";
+import { Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 
@@ -6,40 +6,11 @@ import { ModulePageClient } from "./module-page-client";
 import { formatModerationStatus } from "@/lib/assessment-utils";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/user-display";
 
 type ModulePageProps = {
   params: Promise<{ moduleId: string }>;
 };
-
-function getTopMembershipRole(memberships: { role: ModuleRole }[]): ModuleRole | null {
-  if (memberships.some((membership) => membership.role === ModuleRole.MODULE_LEADER)) {
-    return ModuleRole.MODULE_LEADER;
-  }
-
-  if (memberships.some((membership) => membership.role === ModuleRole.MODERATOR)) {
-    return ModuleRole.MODERATOR;
-  }
-
-  if (memberships.some((membership) => membership.role === ModuleRole.MARKER)) {
-    return ModuleRole.MARKER;
-  }
-
-  return null;
-}
-
-function getDisplayName(user: { name: string; email?: string | null }): string {
-  const trimmedName = user.name.trim();
-
-  if (trimmedName) {
-    return trimmedName;
-  }
-
-  if (user.email) {
-    return user.email.split("@")[0] || "Unnamed user";
-  }
-
-  return "Unnamed user";
-}
 
 function formatDateTime(date: Date | null): string {
   if (!date) {
@@ -95,11 +66,12 @@ export default async function ModulePage({ params }: ModulePageProps) {
               id: true,
               name: true,
               email: true,
-              role: true,
+              passwordHash: true,
+              emailVerified: true,
             },
           },
         },
-        orderBy: [{ active: "desc" }, { role: "asc" }, { user: { name: "asc" } }],
+        orderBy: [{ active: "desc" }, { isLeader: "desc" }, { user: { name: "asc" } }],
       },
     },
   });
@@ -111,11 +83,9 @@ export default async function ModulePage({ params }: ModulePageProps) {
   const currentUserMemberships = moduleRecord.memberships.filter(
     (membership) => membership.userId === session.user.id && membership.active
   );
-  const membershipRole = getTopMembershipRole(currentUserMemberships);
   const isAllowed = session.user.role === Role.ADMIN || currentUserMemberships.length > 0;
   const canManageModule =
-    session.user.role === Role.ADMIN ||
-    currentUserMemberships.some((membership) => membership.role === ModuleRole.MODULE_LEADER);
+    session.user.role === Role.ADMIN || currentUserMemberships.some((membership) => membership.isLeader);
 
   if (!isAllowed) {
     notFound();
@@ -128,6 +98,8 @@ export default async function ModulePage({ params }: ModulePageProps) {
           id: true,
           name: true,
           email: true,
+          passwordHash: true,
+          emailVerified: true,
         },
       })
     : [];
@@ -140,25 +112,36 @@ export default async function ModulePage({ params }: ModulePageProps) {
       moduleCode={moduleRecord.code}
       moduleTitle={moduleRecord.title}
       canManageModule={canManageModule}
-      currentRole={membershipRole ?? Role.ADMIN}
+      currentUserIsLeader={currentUserMemberships.some((membership) => membership.isLeader)}
       activeMembers={activeMembers.map((membership) => ({
         id: membership.id,
-        role: membership.role,
+        userId: membership.user.id,
+        isLeader: membership.isLeader,
         displayName: getDisplayName(membership.user),
         email: membership.user.email,
+        meta:
+          membership.user.passwordHash && membership.user.emailVerified
+            ? undefined
+            : "Invitation pending",
       }))}
       allUsers={users.map((user) => ({
         id: user.id,
-        displayName: getDisplayName(user),
+        name: getDisplayName(user),
         email: user.email,
+        meta:
+          user.passwordHash && user.emailVerified
+            ? undefined
+            : "Invitation pending",
       }))}
-      moderatorOptions={activeMembers
-        .filter((membership) => membership.role === ModuleRole.MODERATOR)
-        .map((membership) => ({
-          id: membership.user.id,
-          displayName: getDisplayName(membership.user),
-          email: membership.user.email,
-        }))}
+      moderatorOptions={activeMembers.map((membership) => ({
+        id: membership.user.id,
+        name: getDisplayName(membership.user),
+        email: membership.user.email,
+        meta:
+          membership.user.passwordHash && membership.user.emailVerified
+            ? undefined
+            : "Invitation pending",
+      }))}
       assessments={moduleRecord.assessmentTemplates.map((template) => ({
         id: template.id,
         name: template.name,

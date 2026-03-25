@@ -166,7 +166,7 @@ export const authOptions: NextAuthOptions = {
         token.role = dbUser.role;
         token.name = dbUser.name;
       } else {
-        token.role = Role.MARKER;
+        token.role = Role.USER;
       }
 
       return token;

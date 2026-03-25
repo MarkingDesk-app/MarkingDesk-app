@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { CalendarPlus2, ChevronRight, Plus, Settings2, Users } from "lucide-react";
+import { CalendarPlus2, ChevronRight, Plus, Settings2, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -9,26 +9,21 @@ import {
   createAcademicYearAction,
   createAssessmentAction,
   deactivateModuleMembershipAction,
+  inviteModuleUserAction,
   saveModuleMembershipAction,
 } from "./actions";
-import { RoleBadge } from "@/components/role-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ModalShell } from "@/components/ui/modal-shell";
-
-type ModuleTeamRole = "MARKER" | "MODULE_LEADER" | "MODERATOR";
+import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
 type Member = {
   id: string;
-  role: ModuleTeamRole;
+  userId: string;
+  isLeader: boolean;
   displayName: string;
   email: string;
-};
-
-type UserOption = {
-  id: string;
-  displayName: string;
-  email: string;
+  meta?: string;
 };
 
 type AssessmentInstanceSummary = {
@@ -53,19 +48,19 @@ type ModulePageClientProps = {
   moduleCode: string;
   moduleTitle: string;
   canManageModule: boolean;
-  currentRole: ModuleTeamRole | "ADMIN";
+  currentUserIsLeader: boolean;
   activeMembers: Member[];
-  allUsers: UserOption[];
-  moderatorOptions: UserOption[];
+  allUsers: UserPickerOption[];
+  moderatorOptions: UserPickerOption[];
   assessments: AssessmentSummary[];
 };
 
 type Feedback = {
   tone: "error" | "success";
   message: string;
-};
+} | null;
 
-function FeedbackMessage({ feedback }: { feedback: Feedback | null }) {
+function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   if (!feedback) {
     return null;
   }
@@ -88,7 +83,7 @@ export function ModulePageClient({
   moduleCode,
   moduleTitle,
   canManageModule,
-  currentRole,
+  currentUserIsLeader,
   activeMembers,
   allUsers,
   moderatorOptions,
@@ -96,18 +91,19 @@ export function ModulePageClient({
 }: ModulePageClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [feedback, setFeedback] = useState<Feedback>(null);
   const [showAssessmentModal, setShowAssessmentModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [academicYearModal, setAcademicYearModal] = useState<AssessmentSummary | null>(null);
-
-  const assessmentOptions = useMemo(
-    () =>
-      assessments.map((assessment) => ({
-        id: assessment.id,
-        label: assessment.name,
-      })),
-    [assessments]
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [newMembershipIsLeader, setNewMembershipIsLeader] = useState(false);
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteIsLeader, setInviteIsLeader] = useState(false);
+  const [selectedModeratorUserId, setSelectedModeratorUserId] = useState("");
+  const leaderCount = useMemo(
+    () => activeMembers.filter((member) => member.isLeader).length,
+    [activeMembers]
   );
 
   const handleAssessmentSubmit = async (formData: FormData) => {
@@ -136,7 +132,6 @@ export function ModulePageClient({
     const opensAt = String(formData.get("opensAt") ?? "");
     const dueAt = String(formData.get("dueAt") ?? "");
     const markingDeadlineAt = String(formData.get("markingDeadlineAt") ?? "");
-    const moderatorUserId = String(formData.get("moderatorUserId") ?? "").trim();
 
     startTransition(async () => {
       const result = await createAcademicYearAction({
@@ -146,7 +141,7 @@ export function ModulePageClient({
         opensAt,
         dueAt,
         markingDeadlineAt,
-        moderatorUserId,
+        moderatorUserId: selectedModeratorUserId,
       });
 
       if (!result.ok) {
@@ -155,20 +150,18 @@ export function ModulePageClient({
       }
 
       setAcademicYearModal(null);
+      setSelectedModeratorUserId("");
       setFeedback({ tone: "success", message: result.message ?? "Academic year saved." });
       router.refresh();
     });
   };
 
-  const handleMembershipSubmit = async (formData: FormData) => {
-    const userId = String(formData.get("userId") ?? "").trim();
-    const role = String(formData.get("role") ?? "").trim() as ModuleTeamRole;
-
+  const handleMembershipSave = () => {
     startTransition(async () => {
       const result = await saveModuleMembershipAction({
         moduleId,
-        userId,
-        role,
+        userId: selectedUserId,
+        isLeader: newMembershipIsLeader,
       });
 
       if (!result.ok) {
@@ -176,7 +169,31 @@ export function ModulePageClient({
         return;
       }
 
+      setSelectedUserId("");
+      setNewMembershipIsLeader(false);
       setFeedback({ tone: "success", message: result.message ?? "Team member saved." });
+      router.refresh();
+    });
+  };
+
+  const handleInvite = () => {
+    startTransition(async () => {
+      const result = await inviteModuleUserAction({
+        moduleId,
+        name: inviteName,
+        email: inviteEmail,
+        isLeader: inviteIsLeader,
+      });
+
+      if (!result.ok) {
+        setFeedback({ tone: "error", message: result.error });
+        return;
+      }
+
+      setInviteName("");
+      setInviteEmail("");
+      setInviteIsLeader(false);
+      setFeedback({ tone: "success", message: result.message ?? "Invitation sent." });
       router.refresh();
     });
   };
@@ -198,6 +215,27 @@ export function ModulePageClient({
     });
   };
 
+  const handleLeadershipChange = (userId: string, isLeader: boolean) => {
+    startTransition(async () => {
+      const result = await saveModuleMembershipAction({
+        moduleId,
+        userId,
+        isLeader,
+      });
+
+      if (!result.ok) {
+        setFeedback({ tone: "error", message: result.error });
+        return;
+      }
+
+      setFeedback({
+        tone: "success",
+        message: isLeader ? "Module leader assigned." : "Module leader removed.",
+      });
+      router.refresh();
+    });
+  };
+
   return (
     <div className="space-y-6">
       <section className="flex flex-col gap-4 rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
@@ -206,7 +244,11 @@ export function ModulePageClient({
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">{moduleCode}</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{moduleTitle}</h1>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <RoleBadge role={currentRole} />
+              {currentUserIsLeader ? (
+                <span className="rounded-full bg-sky-100 px-3 py-1 text-sm font-medium text-sky-800">
+                  You are a module leader
+                </span>
+              ) : null}
               <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
                 {assessments.length} assessment{assessments.length === 1 ? "" : "s"}
               </span>
@@ -240,7 +282,7 @@ export function ModulePageClient({
               <Users className="h-5 w-5 text-sky-600" />
               Module Team
             </CardTitle>
-            <p className="mt-1 text-sm text-slate-600">Active module members and their current roles.</p>
+            <p className="mt-1 text-sm text-slate-600">Active members and current module leaders.</p>
           </div>
           {canManageModule ? (
             <Button variant="ghost" onClick={() => setShowTeamModal(true)}>
@@ -251,14 +293,20 @@ export function ModulePageClient({
         <CardContent>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {activeMembers.map((member) => (
-              <div
-                key={member.id}
-                className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3"
-              >
+              <div key={member.id} className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3">
                 <p className="text-sm font-semibold text-slate-950">{member.displayName}</p>
                 <p className="mt-1 text-sm text-slate-500">{member.email}</p>
-                <div className="mt-3">
-                  <RoleBadge role={member.role} />
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  {member.isLeader ? (
+                    <span className="rounded-full bg-sky-100 px-2.5 py-1 font-medium text-sky-800">
+                      Module leader
+                    </span>
+                  ) : null}
+                  {member.meta ? (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 font-medium text-amber-800">
+                      {member.meta}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -267,11 +315,9 @@ export function ModulePageClient({
       </Card>
 
       <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Assessments</h2>
-            <p className="mt-1 text-sm text-slate-600">Each assessment can hold multiple academic years.</p>
-          </div>
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Assessments</h2>
+          <p className="mt-1 text-sm text-slate-600">Each assessment can hold multiple academic years.</p>
         </div>
 
         {assessments.length === 0 ? (
@@ -288,12 +334,18 @@ export function ModulePageClient({
                   <div>
                     <CardTitle className="text-xl">{assessment.name}</CardTitle>
                     <p className="mt-1 text-sm text-slate-600">
-                      {assessment.instances.length} academic year
-                      {assessment.instances.length === 1 ? "" : "s"}
+                      {assessment.instances.length} academic year{assessment.instances.length === 1 ? "" : "s"}
                     </p>
                   </div>
                   {canManageModule ? (
-                    <Button variant="secondary" size="sm" onClick={() => setAcademicYearModal(assessment)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedModeratorUserId("");
+                        setAcademicYearModal(assessment);
+                      }}
+                    >
                       <CalendarPlus2 className="h-4 w-4" />
                       Add academic year
                     </Button>
@@ -372,11 +424,7 @@ export function ModulePageClient({
         description="Create a new yearly run of this assessment and assign the moderator."
       >
         <form action={handleAcademicYearSubmit} className="space-y-4">
-          <input
-            type="hidden"
-            name="assessmentTemplateId"
-            value={academicYearModal?.id ?? assessmentOptions[0]?.id ?? ""}
-          />
+          <input type="hidden" name="assessmentTemplateId" value={academicYearModal?.id ?? ""} />
 
           <div className="space-y-2">
             <label htmlFor="academic-year" className="text-sm font-medium text-slate-700">
@@ -430,24 +478,13 @@ export function ModulePageClient({
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
               />
             </div>
-            <div className="space-y-2">
-              <label htmlFor="moderator-user-id" className="text-sm font-medium text-slate-700">
-                Assigned moderator
-              </label>
-              <select
-                id="moderator-user-id"
-                name="moderatorUserId"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
-                defaultValue=""
-              >
-                <option value="">Select a moderator</option>
-                {moderatorOptions.map((moderator) => (
-                  <option key={moderator.id} value={moderator.id}>
-                    {moderator.displayName}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <UserPicker
+              options={moderatorOptions}
+              value={selectedModeratorUserId}
+              onValueChange={setSelectedModeratorUserId}
+              label="Assigned moderator"
+              placeholder="Search for a module member"
+            />
           </div>
 
           <div className="flex justify-end">
@@ -462,74 +499,128 @@ export function ModulePageClient({
         open={showTeamModal}
         onClose={() => setShowTeamModal(false)}
         title="Manage module team"
-        description="Add or reactivate a team member, or remove an active member from the module."
+        description="Add existing users, invite new users, and update module leadership."
       >
         <div className="space-y-6">
-          <form action={handleMembershipSubmit} className="grid gap-4 md:grid-cols-[1.4fr_1fr_auto] md:items-end">
-            <div className="space-y-2">
-              <label htmlFor="team-user" className="text-sm font-medium text-slate-700">
-                Team member
-              </label>
-              <select
-                id="team-user"
-                name="userId"
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
-                defaultValue=""
-              >
-                <option value="">Select a user</option>
-                {allUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.displayName} ({user.email})
-                  </option>
-                ))}
-              </select>
+          <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
+            <div className="flex items-center gap-2 text-slate-950">
+              <Users className="h-4 w-4 text-sky-600" />
+              <h3 className="text-sm font-semibold">Add existing user</h3>
             </div>
-            <div className="space-y-2">
-              <label htmlFor="team-role" className="text-sm font-medium text-slate-700">
-                Role
-              </label>
-              <select
-                id="team-role"
-                name="role"
-                required
-                defaultValue="MARKER"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
-              >
-                <option value="MARKER">Marker</option>
-                <option value="MODULE_LEADER">Module leader</option>
-                <option value="MODERATOR">Moderator</option>
-              </select>
+
+            <UserPicker
+              options={allUsers}
+              value={selectedUserId}
+              onValueChange={setSelectedUserId}
+              placeholder="Search for a user"
+            />
+
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={newMembershipIsLeader}
+                onChange={(event) => setNewMembershipIsLeader(event.target.checked)}
+              />
+              Assign as module leader
+            </label>
+
+            <div className="flex justify-end">
+              <Button onClick={handleMembershipSave} disabled={isPending || !selectedUserId}>
+                Save team member
+              </Button>
             </div>
-            <Button type="submit" disabled={isPending}>
-              Save
-            </Button>
-          </form>
+          </div>
+
+          <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
+            <div className="flex items-center gap-2 text-slate-950">
+              <UserPlus className="h-4 w-4 text-sky-600" />
+              <h3 className="text-sm font-semibold">Invite new user</h3>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label htmlFor="invite-name" className="text-sm font-medium text-slate-700">
+                  Name
+                </label>
+                <input
+                  id="invite-name"
+                  value={inviteName}
+                  onChange={(event) => setInviteName(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+                  placeholder="Alex Smith"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="invite-email" className="text-sm font-medium text-slate-700">
+                  Email
+                </label>
+                <input
+                  id="invite-email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+                  placeholder="alex@example.edu"
+                />
+              </div>
+            </div>
+
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={inviteIsLeader}
+                onChange={(event) => setInviteIsLeader(event.target.checked)}
+              />
+              Add to this module as a leader
+            </label>
+
+            <div className="flex justify-end">
+              <Button onClick={handleInvite} disabled={isPending || !inviteName.trim() || !inviteEmail.trim()}>
+                Send invitation
+              </Button>
+            </div>
+          </div>
 
           <div className="space-y-3">
-            {activeMembers.map((member) => (
-              <div
-                key={member.id}
-                className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-4 md:flex-row md:items-center md:justify-between"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-slate-950">{member.displayName}</p>
-                  <p className="mt-1 text-sm text-slate-500">{member.email}</p>
+            {activeMembers.map((member) => {
+              const isOnlyLeader = member.isLeader && leaderCount === 1;
+
+              return (
+                <div
+                  key={member.id}
+                  className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">{member.displayName}</p>
+                    <p className="mt-1 text-sm text-slate-500">{member.email}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {member.isLeader ? (
+                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
+                        Module leader
+                      </span>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleLeadershipChange(member.userId, !member.isLeader)}
+                      disabled={isPending || isOnlyLeader}
+                    >
+                      {member.isLeader ? "Remove leader" : "Make leader"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeactivateMembership(member.id)}
+                      disabled={isPending || isOnlyLeader}
+                    >
+                      Remove
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <RoleBadge role={member.role} />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDeactivateMembership(member.id)}
-                    disabled={isPending}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </ModalShell>

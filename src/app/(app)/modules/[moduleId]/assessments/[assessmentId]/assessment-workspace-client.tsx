@@ -18,6 +18,7 @@ import {
   saveAssessmentModerationAction,
   saveScriptAllocationAction,
   saveScriptGradeAction,
+  updateAssessmentSettingsAction,
 } from "./actions";
 import {
   buildTurnitinSubmissionUrl,
@@ -29,11 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FloatingToast } from "@/components/ui/floating-toast";
 import { ModalShell } from "@/components/ui/modal-shell";
-
-type MarkerOption = {
-  id: string;
-  displayName: string;
-};
+import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
 type ScriptRow = {
   id: string;
@@ -44,6 +41,7 @@ type ScriptRow = {
   markerUserId: string | null;
   markerName: string | null;
   canMark: boolean;
+  assignedToCurrentUser: boolean;
   hasIntegrityFlag: boolean;
   hasReviewFlag: boolean;
 };
@@ -67,7 +65,12 @@ type AssessmentWorkspaceClientProps = {
   markingDeadlineAt: string;
   canManageAssessment: boolean;
   canSubmitModeration: boolean;
-  markerOptions: MarkerOption[];
+  markerOptions: UserPickerOption[];
+  moderatorOptions: UserPickerOption[];
+  opensAtInput: string;
+  dueAtInput: string;
+  markingDeadlineAtInput: string;
+  currentModeratorUserId: string;
   scripts: ScriptRow[];
   moderation: ModerationSummary;
 };
@@ -75,6 +78,13 @@ type AssessmentWorkspaceClientProps = {
 type ToastState = {
   tone: "success" | "error";
   message: string;
+} | null;
+
+type ViewMode = "all" | "my_allocation";
+
+type AllocationDraft = {
+  scriptId: string;
+  turnitinId: string;
 } | null;
 
 function formatGradeValue(grade: number | null): string {
@@ -125,6 +135,11 @@ export function AssessmentWorkspaceClient({
   canManageAssessment,
   canSubmitModeration,
   markerOptions,
+  moderatorOptions,
+  opensAtInput,
+  dueAtInput,
+  markingDeadlineAtInput,
+  currentModeratorUserId,
   scripts: initialScripts,
   moderation: initialModeration,
 }: AssessmentWorkspaceClientProps) {
@@ -139,10 +154,19 @@ export function AssessmentWorkspaceClient({
   const [toast, setToast] = useState<ToastState>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showOpenAllModal, setShowOpenAllModal] = useState(false);
+  const [showOpenMyAllocationModal, setShowOpenMyAllocationModal] = useState(false);
+  const [showEditAssessmentModal, setShowEditAssessmentModal] = useState(false);
   const [showModerationModal, setShowModerationModal] = useState(false);
+  const [allocationDraft, setAllocationDraft] = useState<AllocationDraft>(null);
+  const [allocationMarkerUserId, setAllocationMarkerUserId] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [importSubmissionType, setImportSubmissionType] = useState<SubmissionType>(SubmissionType.FIRST_SUBMISSION);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
+  const [settingsOpensAt, setSettingsOpensAt] = useState(opensAtInput);
+  const [settingsDueAt, setSettingsDueAt] = useState(dueAtInput);
+  const [settingsMarkingDeadlineAt, setSettingsMarkingDeadlineAt] = useState(markingDeadlineAtInput);
+  const [settingsModeratorUserId, setSettingsModeratorUserId] = useState(currentModeratorUserId);
   const [moderationStatus, setModerationStatus] = useState<ModerationStatus>(
     moderationStatusFromLabel(initialModeration.statusLabel)
   );
@@ -160,14 +184,22 @@ export function AssessmentWorkspaceClient({
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
+  const myAllocatedScripts = useMemo(
+    () => scripts.filter((script) => script.assignedToCurrentUser),
+    [scripts]
+  );
+  const visibleScripts = viewMode === "my_allocation" ? myAllocatedScripts : scripts;
   const activeSelectedScriptIds = selectedScriptIds.filter((id) => scripts.some((script) => script.id === id));
+  const visibleSelectedScriptIds = activeSelectedScriptIds.filter((id) =>
+    visibleScripts.some((script) => script.id === id)
+  );
   const totalScriptCount = scripts.length;
   const markedScriptCount = scripts.filter((script) => {
     const pendingGradeValue = gradeInputs[script.id];
     const effectiveValue = pendingGradeValue ?? formatGradeValue(script.grade);
     return effectiveValue.trim() !== "";
   }).length;
-  const allSelected = scripts.length > 0 && activeSelectedScriptIds.length === scripts.length;
+  const allSelected = visibleScripts.length > 0 && visibleSelectedScriptIds.length === visibleScripts.length;
   const remainingScripts = totalScriptCount - markedScriptCount;
   const progressPercentage = totalScriptCount === 0 ? 0 : Math.round((markedScriptCount / totalScriptCount) * 100);
 
@@ -186,6 +218,29 @@ export function AssessmentWorkspaceClient({
 
   const showToast = (tone: "success" | "error", message: string) => {
     setToast({ tone, message });
+  };
+
+  const closeAllocationModal = () => {
+    setAllocationDraft(null);
+    setAllocationMarkerUserId("");
+  };
+
+  const resetAssessmentSettingsForm = () => {
+    setSettingsOpensAt(opensAtInput);
+    setSettingsDueAt(dueAtInput);
+    setSettingsMarkingDeadlineAt(markingDeadlineAtInput);
+    setSettingsModeratorUserId(currentModeratorUserId);
+  };
+
+  const handleViewModeChange = (nextViewMode: ViewMode) => {
+    setViewMode(nextViewMode);
+
+    if (nextViewMode === "all") {
+      return;
+    }
+
+    const myAllocationIds = new Set(myAllocatedScripts.map((script) => script.id));
+    setSelectedScriptIds((current) => current.filter((id) => myAllocationIds.has(id)));
   };
 
   const rewriteImportTextWithIds = (ids: string[]) => {
@@ -211,7 +266,11 @@ export function AssessmentWorkspaceClient({
   };
 
   const toggleSelectAll = () => {
-    setSelectedScriptIds(allSelected ? [] : scripts.map((script) => script.id));
+    setSelectedScriptIds(
+      allSelected
+        ? activeSelectedScriptIds.filter((id) => !visibleScripts.some((script) => script.id === id))
+        : Array.from(new Set([...activeSelectedScriptIds, ...visibleScripts.map((script) => script.id)]))
+    );
   };
 
   const toggleScriptSelection = (scriptId: string) => {
@@ -268,13 +327,25 @@ export function AssessmentWorkspaceClient({
     });
   };
 
-  const handleAllocationChange = (scriptId: string, markerUserId: string) => {
+  const openAllocationModal = (script: ScriptRow) => {
+    setAllocationDraft({
+      scriptId: script.id,
+      turnitinId: script.turnitinId,
+    });
+    setAllocationMarkerUserId(script.markerUserId ?? "");
+  };
+
+  const handleAllocationSave = () => {
+    if (!allocationDraft) {
+      return;
+    }
+
     startTransition(async () => {
       const result = await saveScriptAllocationAction({
         moduleId,
         assessmentId,
-        scriptId,
-        markerUserId: markerUserId || null,
+        scriptId: allocationDraft.scriptId,
+        markerUserId: allocationMarkerUserId || null,
       });
 
       if (!result.ok) {
@@ -282,6 +353,7 @@ export function AssessmentWorkspaceClient({
         return;
       }
 
+      closeAllocationModal();
       showToast("success", result.message ?? "Allocation saved.");
       router.refresh();
     });
@@ -376,9 +448,34 @@ export function AssessmentWorkspaceClient({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {activeSelectedScriptIds.length > 0 ? (
-              <Button variant="secondary" onClick={() => openScriptsInTabs(activeSelectedScriptIds)}>
-                Open selected ({activeSelectedScriptIds.length})
+            <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("all")}
+                className={
+                  viewMode === "all"
+                    ? "rounded-xl bg-sky-600 px-3 py-2 text-sm font-medium text-white"
+                    : "rounded-xl px-3 py-2 text-sm font-medium text-slate-600"
+                }
+              >
+                View All
+              </button>
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("my_allocation")}
+                disabled={myAllocatedScripts.length === 0}
+                className={
+                  viewMode === "my_allocation"
+                    ? "rounded-xl bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:bg-slate-200 disabled:text-slate-400"
+                    : "rounded-xl px-3 py-2 text-sm font-medium text-slate-600 disabled:text-slate-400"
+                }
+              >
+                View My Allocation
+              </button>
+            </div>
+            {visibleSelectedScriptIds.length > 0 ? (
+              <Button variant="secondary" onClick={() => openScriptsInTabs(visibleSelectedScriptIds)}>
+                Open selected ({visibleSelectedScriptIds.length})
               </Button>
             ) : null}
             {scripts.length > 0 ? (
@@ -386,8 +483,22 @@ export function AssessmentWorkspaceClient({
                 Open all
               </Button>
             ) : null}
+            {myAllocatedScripts.length > 0 ? (
+              <Button variant="secondary" onClick={() => setShowOpenMyAllocationModal(true)}>
+                Open my allocation
+              </Button>
+            ) : null}
             {canManageAssessment ? (
               <>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    resetAssessmentSettingsForm();
+                    setShowEditAssessmentModal(true);
+                  }}
+                >
+                  Edit assessment
+                </Button>
                 <Button variant="secondary" onClick={handleAutoAssign} disabled={isPending}>
                   {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UsersRound className="h-4 w-4" />}
                   Auto-assign
@@ -461,10 +572,17 @@ export function AssessmentWorkspaceClient({
           <CardTitle className="text-xl">Submissions</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {scripts.length === 0 ? (
+          {visibleScripts.length === 0 ? (
             <div className="px-6 py-12 text-center text-sm text-slate-500">
-              No submissions yet. Use <span className="font-medium text-slate-700">Import Submissions</span> to add the
-              Turnitin IDs for this assessment.
+              {viewMode === "my_allocation"
+                ? "No scripts are currently assigned to you."
+                : (
+                    <>
+                      No submissions yet. Use{" "}
+                      <span className="font-medium text-slate-700">Import Submissions</span> to add the Turnitin IDs for
+                      this assessment.
+                    </>
+                  )}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -482,7 +600,7 @@ export function AssessmentWorkspaceClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {scripts.map((script) => (
+                  {visibleScripts.map((script) => (
                     <tr key={script.id} className="border-t border-slate-200/80 text-sm text-slate-700">
                       <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
                         <input
@@ -495,22 +613,19 @@ export function AssessmentWorkspaceClient({
                         {script.turnitinId}
                       </td>
                       <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
-                        {canManageAssessment ? (
-                          <select
-                            value={script.markerUserId ?? ""}
-                            onChange={(event) => handleAllocationChange(script.id, event.target.value)}
-                            className="min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-sky-500 focus:ring-2"
-                          >
-                            <option value="">Unassigned</option>
-                            {markerOptions.map((marker) => (
-                              <option key={marker.id} value={marker.id}>
-                                {marker.displayName}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
+                        <div className="flex flex-wrap items-center gap-3">
                           <span className="text-slate-600">{script.markerName ?? "Unassigned"}</span>
-                        )}
+                          {canManageAssessment ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openAllocationModal(script)}
+                            >
+                              {script.markerUserId ? "Change" : "Assign"}
+                            </Button>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
                         {formatSubmissionType(script.submissionType)}
@@ -568,6 +683,131 @@ export function AssessmentWorkspaceClient({
           )}
         </CardContent>
       </Card>
+
+      <ModalShell
+        open={showEditAssessmentModal}
+        onClose={() => setShowEditAssessmentModal(false)}
+        title="Edit assessment"
+        description="Update the assessment dates and assigned moderator."
+      >
+        <div className="space-y-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label htmlFor="edit-opens-at" className="text-sm font-medium text-slate-700">
+                Opens at
+              </label>
+              <input
+                id="edit-opens-at"
+                type="datetime-local"
+                value={settingsOpensAt}
+                onChange={(event) => setSettingsOpensAt(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+              />
+            </div>
+            <UserPicker
+              options={moderatorOptions}
+              value={settingsModeratorUserId}
+              onValueChange={setSettingsModeratorUserId}
+              label="Assigned moderator"
+              placeholder="Search for a module member"
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label htmlFor="edit-due-at" className="text-sm font-medium text-slate-700">
+                Due date
+              </label>
+              <input
+                id="edit-due-at"
+                type="datetime-local"
+                value={settingsDueAt}
+                onChange={(event) => setSettingsDueAt(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="edit-marking-deadline-at" className="text-sm font-medium text-slate-700">
+                Marking deadline
+              </label>
+              <input
+                id="edit-marking-deadline-at"
+                type="datetime-local"
+                value={settingsMarkingDeadlineAt}
+                onChange={(event) => setSettingsMarkingDeadlineAt(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowEditAssessmentModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                startTransition(async () => {
+                  const result = await updateAssessmentSettingsAction({
+                    moduleId,
+                    assessmentId,
+                    opensAt: settingsOpensAt,
+                    dueAt: settingsDueAt,
+                    markingDeadlineAt: settingsMarkingDeadlineAt,
+                    moderatorUserId: settingsModeratorUserId,
+                  });
+
+                  if (!result.ok) {
+                    showToast("error", result.error);
+                    return;
+                  }
+
+                  setShowEditAssessmentModal(false);
+                  showToast("success", result.message ?? "Assessment settings updated.");
+                  router.refresh();
+                });
+              }}
+              disabled={isPending || !settingsDueAt || !settingsMarkingDeadlineAt}
+            >
+              Save changes
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={allocationDraft !== null}
+        onClose={closeAllocationModal}
+        title="Assign marker"
+        description={
+          allocationDraft
+            ? `Choose the marker for script ${allocationDraft.turnitinId}.`
+            : "Choose the marker for this script."
+        }
+        widthClassName="max-w-lg"
+      >
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Script ID: <span className="font-medium text-slate-900">{allocationDraft?.turnitinId ?? "—"}</span>
+          </div>
+
+          <UserPicker
+            options={markerOptions}
+            value={allocationMarkerUserId}
+            onValueChange={setAllocationMarkerUserId}
+            label="Allocated marker"
+            placeholder="Search for a module member"
+          />
+
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={closeAllocationModal}>
+              Cancel
+            </Button>
+            <Button onClick={handleAllocationSave} disabled={isPending}>
+              Save allocation
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
 
       <ModalShell
         open={showImportModal}
@@ -710,6 +950,34 @@ export function AssessmentWorkspaceClient({
               }}
             >
               Open all
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={showOpenMyAllocationModal}
+        onClose={() => setShowOpenMyAllocationModal(false)}
+        title="Open my allocation"
+        description={`This will open ${myAllocatedScripts.length} browser tab${myAllocatedScripts.length === 1 ? "" : "s"} from your allocation.`}
+        widthClassName="max-w-lg"
+      >
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            This action is about to open {myAllocatedScripts.length} tabs from your allocation. Are you sure you wish to
+            continue?
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowOpenMyAllocationModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                openScriptsInTabs(myAllocatedScripts.map((script) => script.id));
+                setShowOpenMyAllocationModal(false);
+              }}
+            >
+              Open my allocation
             </Button>
           </div>
         </div>

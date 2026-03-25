@@ -7,7 +7,6 @@ import { redirect } from "next/navigation";
 import { AppTopNav } from "@/components/app-top-nav";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { SignOutButton } from "@/components/auth/sign-out-button";
-import { RoleBadge } from "@/components/role-badge";
 import { authOptions } from "@/lib/auth";
 
 export default async function ProtectedLayout({
@@ -49,7 +48,11 @@ export default async function ProtectedLayout({
                     <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signed in as</p>
                     <p className="max-w-[14rem] truncate text-sm font-medium text-slate-900">{displayName}</p>
                   </div>
-                  <RoleBadge role={session.user.role} />
+                  {session.user.role === Role.ADMIN ? (
+                    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
+                      Admin
+                    </span>
+                  ) : null}
                   <SignOutButton />
                 </div>
               </div>

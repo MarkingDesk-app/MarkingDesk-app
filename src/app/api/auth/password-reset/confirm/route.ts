@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: resetToken.userId },
-      select: { id: true },
+      select: { id: true, emailVerified: true },
     });
 
     if (!user) {
@@ -57,7 +57,10 @@ export async function POST(request: NextRequest) {
     await prisma.$transaction([
       prisma.user.update({
         where: { id: user.id },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          emailVerified: user.emailVerified ?? new Date(),
+        },
       }),
       prisma.passwordResetToken.delete({ where: { token } }),
     ]);

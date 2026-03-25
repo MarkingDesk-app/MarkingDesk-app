@@ -1,10 +1,11 @@
 "use server";
 
-import { ModuleRole, Role } from "@prisma/client";
+import { Role } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
+import { inviteUser } from "@/lib/user-invitations";
 import { prisma } from "@/lib/prisma";
 
 type ActionResult =
@@ -28,7 +29,7 @@ function parseDateTimeInput(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-async function assertModuleManager(moduleId: string) {
+async function getModuleManagementSession(moduleId: string) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.id) {
@@ -43,8 +44,8 @@ async function assertModuleManager(moduleId: string) {
     where: {
       moduleId,
       userId: session.user.id,
-      role: ModuleRole.MODULE_LEADER,
       active: true,
+      isLeader: true,
     },
     select: { id: true },
   });
@@ -54,6 +55,24 @@ async function assertModuleManager(moduleId: string) {
   }
 
   return session;
+}
+
+async function ensureModuleHasAnotherLeader(moduleId: string, excludedUserId: string) {
+  const otherLeader = await prisma.moduleMembership.findFirst({
+    where: {
+      moduleId,
+      active: true,
+      isLeader: true,
+      NOT: {
+        userId: excludedUserId,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!otherLeader) {
+    throw new Error("Each module must keep at least one active module leader.");
+  }
 }
 
 export async function createAssessmentAction(input: {
@@ -68,7 +87,7 @@ export async function createAssessmentAction(input: {
       return { ok: false, error: "Assessment name is required." };
     }
 
-    await assertModuleManager(moduleId);
+    await getModuleManagementSession(moduleId);
 
     await prisma.assessmentTemplate.upsert({
       where: {
@@ -126,7 +145,7 @@ export async function createAcademicYearAction(input: {
       return { ok: false, error: "Marking deadline cannot be earlier than the due date." };
     }
 
-    await assertModuleManager(moduleId);
+    await getModuleManagementSession(moduleId);
 
     const template = await prisma.assessmentTemplate.findUnique({
       where: { id: assessmentTemplateId },
@@ -142,14 +161,13 @@ export async function createAcademicYearAction(input: {
         where: {
           moduleId,
           userId: moderatorUserId,
-          role: ModuleRole.MODERATOR,
           active: true,
         },
         select: { id: true },
       });
 
       if (!moderatorMembership) {
-        return { ok: false, error: "Select an active moderator from the module team." };
+        return { ok: false, error: "Select an active module member as moderator." };
       }
     }
 
@@ -191,33 +209,51 @@ export async function createAcademicYearAction(input: {
 export async function saveModuleMembershipAction(input: {
   moduleId: string;
   userId: string;
-  role: ModuleRole;
+  isLeader: boolean;
 }): Promise<ActionResult> {
   try {
     const moduleId = input.moduleId.trim();
     const userId = input.userId.trim();
-    const role = input.role;
 
-    if (!moduleId || !userId || !role) {
-      return { ok: false, error: "User and role are required." };
+    if (!moduleId || !userId) {
+      return { ok: false, error: "A user is required." };
     }
 
-    await assertModuleManager(moduleId);
+    await getModuleManagementSession(moduleId);
+
+    const existingMembership = await prisma.moduleMembership.findUnique({
+      where: {
+        userId_moduleId: {
+          userId,
+          moduleId,
+        },
+      },
+      select: {
+        active: true,
+        isLeader: true,
+      },
+    });
+
+    if (existingMembership?.active && existingMembership.isLeader && !input.isLeader) {
+      await ensureModuleHasAnotherLeader(moduleId, userId);
+    }
 
     await prisma.moduleMembership.upsert({
       where: {
-        userId_moduleId_role: {
+        userId_moduleId: {
           userId,
           moduleId,
-          role,
         },
       },
-      update: { active: true },
+      update: {
+        active: true,
+        isLeader: input.isLeader,
+      },
       create: {
         userId,
         moduleId,
-        role,
         active: true,
+        isLeader: input.isLeader,
       },
     });
 
@@ -246,7 +282,26 @@ export async function deactivateModuleMembershipAction(input: {
       return { ok: false, error: "Team member details are missing." };
     }
 
-    await assertModuleManager(moduleId);
+    await getModuleManagementSession(moduleId);
+
+    const membership = await prisma.moduleMembership.findUnique({
+      where: { id: membershipId },
+      select: {
+        id: true,
+        moduleId: true,
+        userId: true,
+        active: true,
+        isLeader: true,
+      },
+    });
+
+    if (!membership || membership.moduleId !== moduleId) {
+      return { ok: false, error: "Team member details are missing." };
+    }
+
+    if (membership.active && membership.isLeader) {
+      await ensureModuleHasAnotherLeader(moduleId, membership.userId);
+    }
 
     await prisma.moduleMembership.update({
       where: { id: membershipId },
@@ -262,6 +317,55 @@ export async function deactivateModuleMembershipAction(input: {
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to remove the team member.",
+    };
+  }
+}
+
+export async function inviteModuleUserAction(input: {
+  moduleId: string;
+  name: string;
+  email: string;
+  isLeader: boolean;
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const name = input.name.trim();
+    const email = input.email.trim();
+    const session = await getModuleManagementSession(moduleId);
+
+    const invited = await inviteUser({
+      name,
+      email,
+      invitedByName: session.user.name ?? session.user.email ?? "A MarkingDesk user",
+    });
+
+    await prisma.moduleMembership.upsert({
+      where: {
+        userId_moduleId: {
+          userId: invited.userId,
+          moduleId,
+        },
+      },
+      update: {
+        active: true,
+        isLeader: input.isLeader,
+      },
+      create: {
+        userId: invited.userId,
+        moduleId,
+        active: true,
+        isLeader: input.isLeader,
+      },
+    });
+
+    revalidatePath(`/modules/${moduleId}`);
+    revalidatePath("/admin");
+
+    return { ok: true, message: "Invitation sent and team membership added." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to send invitation.",
     };
   }
 }
