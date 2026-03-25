@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import { ModerationStatus, ReviewFlagStatus, SubmissionType } from "@prisma/client";
 
 import {
-  autoAssignUnallocatedScriptsAction,
+  assignAllocationsAction,
   importAssessmentSubmissionsAction,
   saveAssessmentModerationAction,
   saveReviewFlagAction,
@@ -70,6 +70,8 @@ type AssessmentWorkspaceClientProps = {
   moduleCode: string;
   assessmentName: string;
   academicYear: string;
+  isArchived: boolean;
+  archivedAt: string | null;
   dueAt: string;
   markingDeadlineAt: string;
   canManageAssessment: boolean;
@@ -148,6 +150,19 @@ function compareNullableText(left: string | null, right: string | null): number 
   return (left ?? "").localeCompare(right ?? "");
 }
 
+function buildDefaultAllocationCounts(markerOptions: UserPickerOption[], totalScriptCount: number): Record<string, string> {
+  if (markerOptions.length === 0) {
+    return {};
+  }
+
+  const baseCount = Math.floor(totalScriptCount / markerOptions.length);
+  const remainder = totalScriptCount % markerOptions.length;
+
+  return Object.fromEntries(
+    markerOptions.map((marker, index) => [marker.id, String(baseCount + (index < remainder ? 1 : 0))])
+  );
+}
+
 function getReviewFlagClasses(status: ReviewFlagStatus | null | undefined): string {
   if (!status) {
     return "border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600";
@@ -170,6 +185,8 @@ export function AssessmentWorkspaceClient({
   moduleCode,
   assessmentName,
   academicYear,
+  isArchived,
+  archivedAt,
   dueAt,
   markingDeadlineAt,
   canManageAssessment,
@@ -198,10 +215,12 @@ export function AssessmentWorkspaceClient({
   const [showOpenAllModal, setShowOpenAllModal] = useState(false);
   const [showOpenMyAllocationModal, setShowOpenMyAllocationModal] = useState(false);
   const [showEditAssessmentModal, setShowEditAssessmentModal] = useState(false);
+  const [showAssignAllocationsModal, setShowAssignAllocationsModal] = useState(false);
   const [showModerationModal, setShowModerationModal] = useState(false);
   const [allocationDraft, setAllocationDraft] = useState<AllocationDraft>(null);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(null);
   const [allocationMarkerUserId, setAllocationMarkerUserId] = useState("");
+  const [allocationCounts, setAllocationCounts] = useState<Record<string, string>>({});
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [importSubmissionType, setImportSubmissionType] = useState<SubmissionType>(SubmissionType.FIRST_SUBMISSION);
   const [importText, setImportText] = useState("");
@@ -313,6 +332,16 @@ export function AssessmentWorkspaceClient({
   const allSelected = visibleScripts.length > 0 && visibleSelectedScriptIds.length === visibleScripts.length;
   const remainingScripts = totalScriptCount - markedScriptCount;
   const progressPercentage = totalScriptCount === 0 ? 0 : Math.round((markedScriptCount / totalScriptCount) * 100);
+  const allocationTotal = useMemo(
+    () =>
+      markerOptions.reduce(
+        (sum, marker) => sum + Math.max(0, Number.parseInt(allocationCounts[marker.id] ?? "0", 10) || 0),
+        0
+      ),
+    [allocationCounts, markerOptions]
+  );
+  const allocationDifference = totalScriptCount - allocationTotal;
+  const allocationIsValid = allocationTotal === totalScriptCount;
 
   const extractedIds = useMemo(() => extractTurnitinIds(importText), [importText]);
   const duplicateIdsInPaste = useMemo(() => findDuplicateIds(extractedIds), [extractedIds]);
@@ -335,6 +364,10 @@ export function AssessmentWorkspaceClient({
   const closeAllocationModal = () => {
     setAllocationDraft(null);
     setAllocationMarkerUserId("");
+  };
+
+  const closeAssignAllocationsModal = () => {
+    setShowAssignAllocationsModal(false);
   };
 
   const closeReviewModal = () => {
@@ -547,11 +580,26 @@ export function AssessmentWorkspaceClient({
     });
   };
 
-  const handleAutoAssign = () => {
+  const openAssignAllocationsModal = () => {
+    setAllocationCounts(buildDefaultAllocationCounts(markerOptions, totalScriptCount));
+    setShowAssignAllocationsModal(true);
+  };
+
+  const handleAssignAllocationsSubmit = () => {
+    if (!allocationIsValid || markerOptions.length === 0) {
+      return;
+    }
+
+    const allocations = markerOptions.map((marker) => ({
+      markerUserId: marker.id,
+      count: Math.max(0, Number.parseInt(allocationCounts[marker.id] ?? "0", 10) || 0),
+    }));
+
     startTransition(async () => {
-      const result = await autoAssignUnallocatedScriptsAction({
+      const result = await assignAllocationsAction({
         moduleId,
         assessmentId,
+        allocations,
       });
 
       if (!result.ok) {
@@ -559,7 +607,8 @@ export function AssessmentWorkspaceClient({
         return;
       }
 
-      showToast("success", result.message ?? "Submissions assigned.");
+      closeAssignAllocationsModal();
+      showToast("success", result.message ?? "Allocations assigned.");
       router.refresh();
     });
   };
@@ -594,6 +643,11 @@ export function AssessmentWorkspaceClient({
               {assessmentName} <span className="text-slate-400">/</span> {academicYear}
             </h1>
             <div className="mt-4 flex flex-wrap items-center gap-2">
+              {isArchived ? (
+                <span className="rounded-full bg-slate-900 px-3 py-1 text-sm font-medium text-white">
+                  Archived for audit
+                </span>
+              ) : null}
               <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
                 {totalScriptCount} submissions
               </span>
@@ -657,9 +711,13 @@ export function AssessmentWorkspaceClient({
                 >
                   Edit assessment
                 </Button>
-                <Button variant="secondary" onClick={handleAutoAssign} disabled={isPending}>
+                <Button
+                  variant="secondary"
+                  onClick={openAssignAllocationsModal}
+                  disabled={isPending || markerOptions.length === 0 || totalScriptCount === 0}
+                >
                   {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UsersRound className="h-4 w-4" />}
-                  Auto-assign
+                  Assign Allocations
                 </Button>
                 <Button onClick={() => setShowImportModal(true)}>
                   <Upload className="h-4 w-4" />
@@ -670,6 +728,13 @@ export function AssessmentWorkspaceClient({
           </div>
         </div>
       </section>
+
+      {isArchived ? (
+        <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-600">
+          This assessment was archived{archivedAt ? ` on ${archivedAt}` : ""}. It remains visible for audit purposes,
+          but editing, imports, allocation changes, moderation updates, and review updates are disabled.
+        </div>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>
@@ -720,6 +785,7 @@ export function AssessmentWorkspaceClient({
               Status: <span className="font-medium text-slate-900">{moderation.statusLabel}</span>
             </p>
             <p>Completed: {moderation.completedAt ?? "Not completed yet"}</p>
+            {isArchived ? <p className="text-slate-500">This moderation record is read-only because the assessment is archived.</p> : null}
             {moderation.report ? <p className="line-clamp-3 text-slate-500">{moderation.report}</p> : null}
           </CardContent>
         </Card>
@@ -897,8 +963,15 @@ export function AssessmentWorkspaceClient({
                           <button
                             type="button"
                             onClick={() => openReviewModal(script)}
-                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${getReviewFlagClasses(script.reviewFlag?.status)}`}
-                            title={script.reviewFlag ? formatReviewFlagStatus(script.reviewFlag.status) : "Flag for review"}
+                            disabled={isArchived}
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${getReviewFlagClasses(script.reviewFlag?.status)}`}
+                            title={
+                              isArchived
+                                ? "Archived assessments are read-only"
+                                : script.reviewFlag
+                                  ? formatReviewFlagStatus(script.reviewFlag.status)
+                                  : "Flag for review"
+                            }
                           >
                             {script.reviewFlag?.status === ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW ? (
                               <AlertTriangle className="h-4 w-4" />
@@ -1045,6 +1118,82 @@ export function AssessmentWorkspaceClient({
               Save allocation
             </Button>
           </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={showAssignAllocationsModal}
+        onClose={closeAssignAllocationsModal}
+        title="Assign Allocations"
+        description={`Set how many scripts each marker should receive. The counts must total ${totalScriptCount} scripts.`}
+        widthClassName="max-w-3xl"
+      >
+        <div className="space-y-5">
+          {markerOptions.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              No active markers are available for this assessment.
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                {markerOptions.map((marker) => (
+                  <div key={marker.id} className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{marker.name}</p>
+                        <p className="text-xs text-slate-500">{marker.email}</p>
+                        {marker.meta ? <p className="text-xs text-slate-500">{marker.meta}</p> : null}
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={allocationCounts[marker.id] ?? "0"}
+                        onChange={(event) =>
+                          setAllocationCounts((current) => ({
+                            ...current,
+                            [marker.id]: event.target.value,
+                          }))
+                        }
+                        className="w-24 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-right text-sm outline-none ring-sky-500 focus:ring-2"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                className={
+                  allocationIsValid
+                    ? "rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+                    : allocationDifference < 0
+                      ? "rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+                      : "rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
+                }
+              >
+                <p className="font-medium text-slate-900">
+                  Allocation total: {allocationTotal}/{totalScriptCount} scripts
+                </p>
+                <p className="mt-1">
+                  {allocationIsValid
+                    ? "The allocation is ready to submit."
+                    : allocationDifference < 0
+                      ? `The allocation exceeds the total by ${Math.abs(allocationDifference)} scripts.`
+                      : `Add ${allocationDifference} more script${allocationDifference === 1 ? "" : "s"} to continue.`}
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={closeAssignAllocationsModal}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAssignAllocationsSubmit} disabled={!allocationIsValid || isPending}>
+                  {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                  Allocate
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </ModalShell>
 

@@ -30,6 +30,7 @@ function summarizeModule(module: {
     assessmentInstances: {
       id: string;
       dueAt: Date;
+      moderatorUserId: string | null;
       scripts: { id: string; grade: number | null; allocation: { markerUserId: string } | null }[];
     }[];
   }[];
@@ -61,6 +62,7 @@ function summarizeModule(module: {
   const leaders = module.memberships
     .filter((membership) => membership.isLeader)
     .map((membership) => getDisplayName(membership.user));
+  const moderatedAssessments = allInstances.filter((instance) => instance.moderatorUserId === currentUserId).length;
 
   return {
     id: module.id,
@@ -77,6 +79,8 @@ function summarizeModule(module: {
     currentUserIsLeader: module.memberships.some(
       (membership) => membership.userId === currentUserId && membership.isLeader
     ),
+    currentUserIsModerator: moderatedAssessments > 0,
+    moderatedAssessments,
     leaderSummary:
       leaders.length === 0
         ? "Module leader not assigned"
@@ -103,11 +107,15 @@ async function getDashboardModules(userId: string, role: Role) {
       },
     },
     assessmentTemplates: {
+      where: {
+        isArchived: false,
+      },
       include: {
         assessmentInstances: {
           select: {
             id: true,
             dueAt: true,
+            moderatorUserId: true,
             scripts: {
               select: {
                 id: true,
@@ -149,6 +157,7 @@ async function getDashboardModules(userId: string, role: Role) {
         {
           assessmentTemplates: {
             some: {
+              isArchived: false,
               assessmentInstances: {
                 some: {
                   moderatorUserId: userId,
@@ -160,6 +169,7 @@ async function getDashboardModules(userId: string, role: Role) {
         {
           assessmentTemplates: {
             some: {
+              isArchived: false,
               assessmentInstances: {
                 some: {
                   markerAssignments: {

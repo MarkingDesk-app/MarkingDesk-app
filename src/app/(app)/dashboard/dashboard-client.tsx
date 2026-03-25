@@ -25,6 +25,8 @@ type ModuleSummary = {
   progressPercentage: number;
   leaderSummary: string;
   currentUserIsLeader: boolean;
+  currentUserIsModerator: boolean;
+  moderatedAssessments: number;
 };
 
 type DashboardClientProps = {
@@ -114,42 +116,32 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
 
   return (
     <div className="space-y-6">
-      <section className="rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">Dashboard</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Your modules</h1>
-          </div>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="secondary" asChild>
+          <Link href="/dashboard/timeline">
+            <Rows3 className="h-4 w-4" />
+            View timeline
+          </Link>
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            resetCreateModuleForm();
+            setShowCreateModuleModal(true);
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          Create module
+        </Button>
+      </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" asChild>
-              <Link href="/dashboard/timeline">
-                <Rows3 className="h-4 w-4" />
-                View timeline
-              </Link>
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                resetCreateModuleForm();
-                setShowCreateModuleModal(true);
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              Create module
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-5">
-          <FeedbackMessage feedback={feedback} />
-        </div>
-      </section>
+      <FeedbackMessage feedback={feedback} />
 
       <section id="modules" className="space-y-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Modules</h2>
-          <p className="mt-1 text-sm text-slate-600">Progress and upcoming deadlines across your active modules.</p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Modules</h2>
+          </div>
         </div>
 
         {modules.length === 0 ? (
@@ -171,11 +163,19 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{module.code}</p>
                     <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{module.title}</h3>
                   </div>
-                  {module.currentUserIsLeader ? (
-                    <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">
-                      Module leader
-                    </span>
-                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {module.currentUserIsLeader ? (
+                      <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">
+                        Module leader
+                      </span>
+                    ) : null}
+                    {module.currentUserIsModerator ? (
+                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
+                        Moderator on {module.moderatedAssessments} assessment
+                        {module.moderatedAssessments === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
 
                 <p className="mt-3 text-sm text-slate-600">{module.leaderSummary}</p>

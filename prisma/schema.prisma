@@ -65,6 +65,7 @@ model User {
   moderationChecks             ModerationCheck[]    @relation("ModerationReviewer")
   assessmentMarkerAssignments  AssessmentMarker[]
   createdReviewFlags           ReviewFlag[]         @relation("ReviewFlagCreator")
+  archivedAssessmentTemplates   AssessmentTemplate[] @relation("AssessmentTemplateArchiver")
   auditLogs                    AuditLog[]           @relation("AuditActor")
   emailVerifications           EmailVerification[]
   passwordResets               PasswordResetToken[]
@@ -96,12 +97,17 @@ model AssessmentTemplate {
   id                  String               @id @default(cuid())
   moduleId            String
   name                String
+  isArchived          Boolean              @default(false)
+  archivedAt          DateTime?
+  archivedByUserId    String?
   createdAt           DateTime             @default(now())
   module              Module               @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  archivedBy          User?                @relation("AssessmentTemplateArchiver", fields: [archivedByUserId], references: [id], onDelete: SetNull)
   assessmentInstances AssessmentInstance[]
 
   @@unique([moduleId, name])
   @@index([moduleId])
+  @@index([moduleId, isArchived])
 }
 
 model AssessmentInstance {
@@ -110,6 +116,7 @@ model AssessmentInstance {
   academicYear         String
   dueAt                DateTime
   markingDeadlineAt    DateTime
+  moderationRequestedAt DateTime?
   moderatorUserId      String?
   moderationStatus     ModerationStatus?
   moderationReport     String?

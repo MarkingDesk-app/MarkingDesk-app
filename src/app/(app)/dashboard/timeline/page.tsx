@@ -23,32 +23,32 @@ type TimelineRow = {
   assessmentId: string;
   moduleId: string;
   moduleCode: string;
-  moduleTitle: string;
   assessmentName: string;
-  roleLabel: string;
+  dateSpanLabel: string;
   rowKind: "marker" | "moderator";
-  dueAtLabel: string;
-  markingDeadlineAtLabel: string;
   leftPercentage: number;
   widthPercentage: number;
-  progressPercentage: number | null;
-  allocationLabel: string | null;
-  allocatedScriptsCount: number | null;
 };
-
-function formatDateTime(date: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: LONDON_TIME_ZONE,
-  }).format(date);
-}
 
 function formatMonthLabel(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", {
     month: "short",
     timeZone: LONDON_TIME_ZONE,
   }).format(date);
+}
+
+function formatShortDate(date: Date, includeYear: boolean): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "numeric",
+    ...(includeYear ? { year: "2-digit" as const } : {}),
+    timeZone: LONDON_TIME_ZONE,
+  }).format(date);
+}
+
+function formatDateSpan(dueAt: Date, markingDeadlineAt: Date): string {
+  const includeYear = getLondonParts(dueAt).year !== getLondonParts(markingDeadlineAt).year;
+  return `${formatShortDate(dueAt, includeYear)} - ${formatShortDate(markingDeadlineAt, includeYear)}`;
 }
 
 function formatAcademicYearLabel(startYear: number): string {
@@ -162,6 +162,9 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
 
   const assessments = await prisma.assessmentInstance.findMany({
     where: {
+      assessmentTemplate: {
+        isArchived: false,
+      },
       OR: [
         {
           moderatorUserId: session.user.id,
@@ -229,13 +232,8 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
     .filter((assessment) => assessment.academicYear === selectedAcademicYear)
     .flatMap((assessment) => {
       const position = getTimelinePosition(assessment.dueAt, assessment.markingDeadlineAt, timelineStart, timelineEnd);
-      const myAllocatedScripts = assessment.scripts.filter(
-        (script) => script.allocation?.markerUserId === session.user.id
-      ).length;
-      const myMarkedScripts = assessment.scripts.filter(
-        (script) => script.allocation?.markerUserId === session.user.id && script.grade !== null
-      ).length;
       const rowsForAssessment: TimelineRow[] = [];
+      const dateSpanLabel = formatDateSpan(assessment.dueAt, assessment.markingDeadlineAt);
 
       if (assessment.markerAssignments.length > 0) {
         rowsForAssessment.push({
@@ -243,21 +241,11 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
           assessmentId: assessment.id,
           moduleId: assessment.assessmentTemplate.module.id,
           moduleCode: assessment.assessmentTemplate.module.code,
-          moduleTitle: assessment.assessmentTemplate.module.title,
           assessmentName: assessment.assessmentTemplate.name,
-          roleLabel: "Marker",
+          dateSpanLabel,
           rowKind: "marker",
-          dueAtLabel: formatDateTime(assessment.dueAt),
-          markingDeadlineAtLabel: formatDateTime(assessment.markingDeadlineAt),
           leftPercentage: position.leftPercentage,
           widthPercentage: position.widthPercentage,
-          progressPercentage:
-            myAllocatedScripts > 0 ? Math.round((myMarkedScripts / myAllocatedScripts) * 100) : 0,
-          allocationLabel:
-            myAllocatedScripts > 0
-              ? `${myMarkedScripts}/${myAllocatedScripts} marked`
-              : "No scripts allocated yet",
-          allocatedScriptsCount: myAllocatedScripts,
         });
       }
 
@@ -267,28 +255,17 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
           assessmentId: assessment.id,
           moduleId: assessment.assessmentTemplate.module.id,
           moduleCode: assessment.assessmentTemplate.module.code,
-          moduleTitle: assessment.assessmentTemplate.module.title,
           assessmentName: assessment.assessmentTemplate.name,
-          roleLabel: "Moderator",
+          dateSpanLabel,
           rowKind: "moderator",
-          dueAtLabel: formatDateTime(assessment.dueAt),
-          markingDeadlineAtLabel: formatDateTime(assessment.markingDeadlineAt),
           leftPercentage: position.leftPercentage,
           widthPercentage: position.widthPercentage,
-          progressPercentage: null,
-          allocationLabel: null,
-          allocatedScriptsCount: null,
         });
       }
 
       return rowsForAssessment;
     });
 
-  const markerRowCount = rows.filter((row) => row.rowKind === "marker").length;
-  const moderationRowCount = rows.filter((row) => row.rowKind === "moderator").length;
-  const totalAllocatedScripts = rows
-    .filter((row) => row.rowKind === "marker")
-    .reduce((sum, row) => sum + (row.allocatedScriptsCount ?? 0), 0);
   const hasAssignmentsInOtherYears = availableAcademicYears.length > 0;
 
   return (
@@ -305,10 +282,6 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">Timeline</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Marking workload across the year</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-600">
-              The chart runs from September to August. Each marker bar shows the period from the due date to the
-              marking deadline, so overlapping bars highlight where workload collisions build up.
-            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -327,13 +300,10 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
-            <Button variant="secondary" asChild>
-              <Link href="/dashboard">Back to dashboard</Link>
-            </Button>
           </div>
         </div>
 
-        <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center">
           <div className="flex flex-wrap gap-2 text-sm text-slate-600">
             <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5">
               <span className="h-3 w-8 rounded-full bg-sky-500" />
@@ -344,12 +314,6 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
               Moderator assignment
             </span>
           </div>
-
-          <p className="text-sm text-slate-500">
-            {markerRowCount} marking {markerRowCount === 1 ? "window" : "windows"}, {moderationRowCount} moderation{" "}
-            {moderationRowCount === 1 ? "slot" : "slots"}, {totalAllocatedScripts} allocated{" "}
-            {totalAllocatedScripts === 1 ? "script" : "scripts"}.
-          </p>
         </div>
       </section>
 
@@ -363,9 +327,11 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
       ) : (
         <section className="rounded-[28px] border border-white/70 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
           <div className="overflow-x-auto pb-2">
-            <div className="min-w-[1120px] space-y-3">
-              <div className="grid grid-cols-[320px_minmax(0,1fr)] gap-4 px-2">
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Assignments</div>
+            <div className="min-w-[1080px]">
+              <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-0 border-b border-slate-200/70 px-1">
+                <div className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Workload
+                </div>
                 <div className="grid grid-cols-12 gap-0">
                   {monthColumns.map((month) => (
                     <div
@@ -378,87 +344,54 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
                 </div>
               </div>
 
-              {rows.map((row) => (
-                <Link
-                  key={row.id}
-                  href={`/modules/${row.moduleId}/assessments/${row.assessmentId}`}
-                  className="grid grid-cols-[320px_minmax(0,1fr)] gap-4 rounded-[26px] border border-slate-200/70 bg-slate-50/70 p-4 transition hover:border-sky-200 hover:bg-white"
-                >
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{row.moduleCode}</p>
-                        <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">{row.assessmentName}</h2>
-                        <p className="mt-1 text-sm text-slate-600">{row.moduleTitle}</p>
-                      </div>
-
-                      <span
-                        className={
-                          row.rowKind === "marker"
-                            ? "rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800"
-                            : "rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
-                        }
-                      >
-                        {row.roleLabel}
-                      </span>
+              <div className="divide-y divide-slate-200/70">
+                {rows.map((row) => (
+                  <Link
+                    key={row.id}
+                    href={`/modules/${row.moduleId}/assessments/${row.assessmentId}`}
+                    className="group grid grid-cols-[220px_minmax(0,1fr)] gap-0 transition hover:bg-sky-50/40"
+                  >
+                    <div className="px-4 py-4 pr-5">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{row.moduleCode}</p>
+                      <h2 className="mt-1 truncate text-sm font-semibold tracking-tight text-slate-950">
+                        {row.assessmentName}
+                      </h2>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {row.dateSpanLabel}
+                        {row.rowKind === "moderator" ? " • Moderator" : ""}
+                      </p>
                     </div>
 
-                    <div className="grid gap-2 text-sm text-slate-500">
-                      <p>Due {row.dueAtLabel}</p>
-                      <p>Marking deadline {row.markingDeadlineAtLabel}</p>
-                      {row.allocationLabel ? (
-                        <p className="font-medium text-slate-700">{row.allocationLabel}</p>
-                      ) : (
-                        <p className="font-medium text-slate-700">Moderator</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="relative flex items-center">
-                    <div className="relative h-24 w-full overflow-hidden rounded-[24px] border border-slate-200/70 bg-white/80">
-                      <div className="absolute inset-0 grid grid-cols-12">
+                    <div className="relative px-2 py-4">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 right-0 grid grid-cols-12">
                         {monthColumns.map((month) => (
                           <div
                             key={`${row.id}:${month.key}`}
-                            className="border-l border-slate-200/60 first:border-l-0 odd:bg-slate-50/60"
+                            className="border-l border-slate-200/60 first:border-l-0 odd:bg-slate-50/50"
                           />
                         ))}
                       </div>
 
-                      <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200/80" />
-
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2"
-                        style={{
-                          left: `${row.leftPercentage}%`,
-                          width: `${row.widthPercentage}%`,
-                        }}
-                      >
-                        {row.rowKind === "marker" ? (
-                          <div className="relative overflow-hidden rounded-full border border-sky-300 bg-sky-100 shadow-sm shadow-sky-900/5">
-                            <div
-                              className="absolute inset-y-0 left-0 rounded-full bg-sky-600"
-                              style={{ width: `${row.progressPercentage ?? 0}%` }}
-                            />
-                            <div className="relative flex min-h-12 items-center justify-between gap-3 px-4 py-2.5 text-sm font-medium text-slate-900">
-                              <span className="truncate">
-                                {row.assessmentName}
-                                {row.allocationLabel ? ` • ${row.allocationLabel}` : ""}
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="rounded-full border-2 border-dashed border-amber-500 bg-amber-50/90 px-4 py-1.5 text-sm font-medium text-amber-900">
-                            <span className="truncate">
-                              {row.moduleTitle} • {row.assessmentName} • Moderator
-                            </span>
-                          </div>
-                        )}
+                      <div className="relative h-12">
+                        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-200/80" />
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2"
+                          style={{
+                            left: `${row.leftPercentage}%`,
+                            width: `${row.widthPercentage}%`,
+                          }}
+                        >
+                          {row.rowKind === "marker" ? (
+                            <div className="h-4 rounded-full bg-sky-500 shadow-sm shadow-sky-900/10 transition group-hover:bg-sky-600" />
+                          ) : (
+                            <div className="h-3 rounded-full border-2 border-dashed border-amber-500 bg-amber-50/90 transition group-hover:border-amber-600" />
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                ))}
+              </div>
             </div>
           </div>
         </section>

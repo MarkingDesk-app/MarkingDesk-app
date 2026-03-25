@@ -6,16 +6,40 @@ function extractEmail(input?: string | null): string | null {
   return match ? (match[1] ?? match[0] ?? null) : null;
 }
 
-function logMockEmail(to: string, subject: string, message: string): void {
-  // Keep a visible audit trail in server logs when real delivery is not configured.
-  console.log(`\n[Mock Email]\nTo: ${to}\nSubject: ${subject}\n\n${message}\n`);
+type SendEmailOptions = {
+  cc?: string[];
+};
+
+function normalizeRecipients(recipients: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      recipients
+        .map((recipient) => recipient?.trim())
+        .filter((recipient): recipient is string => Boolean(recipient))
+    )
+  );
 }
 
-export async function sendEmail(to: string, subject: string, message: string): Promise<void> {
+function logMockEmail(to: string, subject: string, message: string, cc?: string[]): void {
+  const ccLine = cc && cc.length > 0 ? `\nCC: ${cc.join(", ")}` : "";
+  // Keep a visible audit trail in server logs when real delivery is not configured.
+  console.log(`\n[Mock Email]\nTo: ${to}${ccLine}\nSubject: ${subject}\n\n${message}\n`);
+}
+
+export async function sendEmail(
+  to: string,
+  subject: string,
+  message: string,
+  options: SendEmailOptions = {}
+): Promise<void> {
   const recipient = extractEmail(to);
   if (!recipient || !EMAIL_REGEX.test(recipient)) {
     throw new Error("Invalid recipient email address");
   }
+
+  const ccRecipients = normalizeRecipients(options.cc ?? [])
+    .map((recipientEmail) => extractEmail(recipientEmail))
+    .filter((recipientEmail): recipientEmail is string => recipientEmail !== null && EMAIL_REGEX.test(recipientEmail));
 
   const fromRaw = (process.env.MAILGUN_FROM_ADDRESS || "").trim();
   const fromEmail = extractEmail(fromRaw);
@@ -31,7 +55,7 @@ export async function sendEmail(to: string, subject: string, message: string): P
     if (missingConfig && process.env.NODE_ENV === "production") {
       console.warn("[Email] Mailgun is not configured. Using mock email output.");
     }
-    logMockEmail(recipient, subject, message);
+    logMockEmail(recipient, subject, message, ccRecipients);
     return;
   }
 
@@ -41,6 +65,10 @@ export async function sendEmail(to: string, subject: string, message: string): P
     subject,
     text: message,
   });
+
+  if (ccRecipients.length > 0) {
+    body.set("cc", ccRecipients.join(", "));
+  }
 
   const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/v3/${domain}/messages`, {
     method: "POST",

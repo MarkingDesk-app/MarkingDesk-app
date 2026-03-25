@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { CalendarPlus2, ChevronRight, Plus, Settings2, UserPlus, Users } from "lucide-react";
+import { Archive, CalendarPlus2, ChevronRight, Plus, Settings2, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import {
+  archiveAssessmentAction,
   createAcademicYearAction,
   createAssessmentAction,
   deactivateAssessmentMarkerAction,
@@ -53,6 +54,16 @@ type AssessmentSummary = {
   instances: AssessmentInstanceSummary[];
 };
 
+type ArchivedAssessmentSummary = {
+  id: string;
+  name: string;
+  archivedAt: string;
+  archivedBy: string;
+  totalScripts: number;
+  totalMarkedScripts: number;
+  instances: AssessmentInstanceSummary[];
+};
+
 type ModulePageClientProps = {
   moduleId: string;
   moduleCode: string;
@@ -62,6 +73,7 @@ type ModulePageClientProps = {
   moduleLeaders: ModuleLeader[];
   allUsers: UserPickerOption[];
   assessments: AssessmentSummary[];
+  archivedAssessments: ArchivedAssessmentSummary[];
 };
 
 type Feedback = {
@@ -96,6 +108,7 @@ export function ModulePageClient({
   moduleLeaders,
   allUsers,
   assessments,
+  archivedAssessments,
 }: ModulePageClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -112,6 +125,7 @@ export function ModulePageClient({
   const [inviteAssessmentEmail, setInviteAssessmentEmail] = useState("");
   const [selectedModeratorUserId, setSelectedModeratorUserId] = useState("");
   const [selectedMarkingTeamUserIds, setSelectedMarkingTeamUserIds] = useState<string[]>([]);
+  const [assessmentArchiveDraft, setAssessmentArchiveDraft] = useState<AssessmentSummary | null>(null);
   const leaderCount = moduleLeaders.length;
   const assessmentTeamOptions = useMemo(
     () =>
@@ -175,6 +189,28 @@ export function ModulePageClient({
       setSelectedModeratorUserId("");
       setSelectedMarkingTeamUserIds([]);
       setFeedback({ tone: "success", message: result.message ?? "Academic year saved." });
+      router.refresh();
+    });
+  };
+
+  const handleArchiveAssessment = () => {
+    if (!assessmentArchiveDraft) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await archiveAssessmentAction({
+        moduleId,
+        assessmentTemplateId: assessmentArchiveDraft.id,
+      });
+
+      if (!result.ok) {
+        setFeedback({ tone: "error", message: result.error });
+        return;
+      }
+
+      setAssessmentArchiveDraft(null);
+      setFeedback({ tone: "success", message: result.message ?? "Assessment archived." });
       router.refresh();
     });
   };
@@ -373,17 +409,27 @@ export function ModulePageClient({
                     </p>
                   </div>
                   {canManageModule ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedModeratorUserId("");
-                        setAcademicYearModal(assessment);
-                      }}
-                    >
-                      <CalendarPlus2 className="h-4 w-4" />
-                      Add academic year
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedModeratorUserId("");
+                          setAcademicYearModal(assessment);
+                        }}
+                      >
+                        <CalendarPlus2 className="h-4 w-4" />
+                        Add academic year
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setAssessmentArchiveDraft(assessment)}
+                      >
+                        <Archive className="h-4 w-4" />
+                        Archive assessment
+                      </Button>
+                    </div>
                   ) : null}
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -427,6 +473,78 @@ export function ModulePageClient({
         )}
       </section>
 
+      {canManageModule ? (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Archived Assessments</h2>
+            <p className="mt-1 text-sm text-slate-600">Archived assessments remain available here for audit purposes.</p>
+          </div>
+
+          {archivedAssessments.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-sm text-slate-600">No archived assessments.</CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {archivedAssessments.map((assessment) => (
+                <Card key={assessment.id} className="overflow-hidden border-slate-200 bg-slate-50/70">
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-xl text-slate-900">{assessment.name}</CardTitle>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {assessment.instances.length} academic year{assessment.instances.length === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700">
+                      Archived
+                    </span>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-1 text-sm text-slate-600">
+                      <p>Archived on {assessment.archivedAt}</p>
+                      <p>Archived by {assessment.archivedBy}</p>
+                      <p>
+                        {assessment.totalMarkedScripts}/{assessment.totalScripts} scripts marked
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {assessment.instances.map((instance) => (
+                        <Link
+                          key={instance.id}
+                          href={`/modules/${moduleId}/assessments/${instance.id}`}
+                          className="group flex items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white/85 px-4 py-4 transition hover:border-slate-300 hover:bg-white"
+                        >
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold text-slate-950">{instance.academicYear}</p>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                {instance.markedScripts}/{instance.totalScripts} marked
+                              </span>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                {instance.teamMembers.length} marker{instance.teamMembers.length === 1 ? "" : "s"}
+                              </span>
+                            </div>
+                            <div className="space-y-1 text-sm text-slate-600">
+                              <p>Due {instance.dueAt}</p>
+                              <p>Deadline {instance.markingDeadlineAt}</p>
+                              <p>
+                                Moderator: {instance.moderatorName ?? "Not assigned"} · {instance.moderationStatus}
+                              </p>
+                            </div>
+                          </div>
+                          <ChevronRight className="h-5 w-5 shrink-0 text-slate-400 transition group-hover:text-slate-700" />
+                        </Link>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
+
       <ModalShell
         open={showAssessmentModal}
         onClose={() => setShowAssessmentModal(false)}
@@ -453,6 +571,39 @@ export function ModulePageClient({
             </Button>
           </div>
         </form>
+      </ModalShell>
+
+      <ModalShell
+        open={assessmentArchiveDraft !== null}
+        onClose={() => setAssessmentArchiveDraft(null)}
+        title="Archive assessment"
+        description={
+          assessmentArchiveDraft
+            ? `${assessmentArchiveDraft.name} has ${assessmentArchiveDraft.instances.length} academic year${assessmentArchiveDraft.instances.length === 1 ? "" : "s"}.`
+            : "Archive this assessment and keep the records for audit."
+        }
+        widthClassName="max-w-xl"
+      >
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+            Archiving will hide this assessment from marking teams and move it into the archived section. The
+            assessment and all academic years within it will remain on file for audit purposes.
+          </div>
+
+          <div className="space-y-1 text-sm text-slate-600">
+            <p>Assessment: {assessmentArchiveDraft?.name ?? "—"}</p>
+            <p>Academic years: {assessmentArchiveDraft?.instances.length ?? 0}</p>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setAssessmentArchiveDraft(null)} disabled={isPending}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleArchiveAssessment} disabled={isPending}>
+              Archive assessment
+            </Button>
+          </div>
+        </div>
       </ModalShell>
 
       <ModalShell

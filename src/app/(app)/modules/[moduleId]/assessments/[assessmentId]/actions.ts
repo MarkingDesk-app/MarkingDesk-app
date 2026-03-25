@@ -48,6 +48,7 @@ type AssessmentContext = {
   sessionUserEmail: string | null;
   moduleId: string;
   assessmentId: string;
+  isArchived: boolean;
   isAdmin: boolean;
   isModuleLeader: boolean;
   isAssessmentMarker: boolean;
@@ -80,6 +81,7 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
       assessmentTemplate: {
         select: {
           moduleId: true,
+          isArchived: true,
         },
       },
     },
@@ -98,6 +100,7 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
       sessionUserEmail: session.user.email ?? null,
       moduleId,
       assessmentId,
+      isArchived: assessment.assessmentTemplate.isArchived,
       isAdmin: true,
       isModuleLeader: true,
       isAssessmentMarker: true,
@@ -127,7 +130,10 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
   );
   const isAssignedModerator = assessment.moderatorUserId === session.user.id;
 
-  if (!isModuleLeader && !isAssessmentMarker && !isAssignedModerator) {
+  if (
+    (!isModuleLeader && !isAssessmentMarker && !isAssignedModerator) ||
+    (assessment.assessmentTemplate.isArchived && !isModuleLeader)
+  ) {
     throw new Error("You do not have access to this assessment.");
   }
 
@@ -137,6 +143,7 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
     sessionUserEmail: session.user.email ?? null,
     moduleId,
     assessmentId,
+    isArchived: assessment.assessmentTemplate.isArchived,
     isAdmin: false,
     isModuleLeader,
     isAssessmentMarker,
@@ -148,6 +155,186 @@ function revalidateAssessmentPaths(moduleId: string, assessmentId: string) {
   revalidatePath(`/modules/${moduleId}`);
   revalidatePath(`/modules/${moduleId}/assessments/${assessmentId}`);
   revalidatePath("/dashboard");
+  revalidatePath("/dashboard/timeline");
+}
+
+function assertAssessmentWritable(context: AssessmentContext): void {
+  if (context.isArchived) {
+    throw new Error("Archived assessments are read-only.");
+  }
+}
+
+function formatEmailDateTime(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Europe/London",
+  }).format(date);
+}
+
+function getAppBaseUrl(): string {
+  const raw = (process.env.NEXTAUTH_URL || process.env.VERCEL_URL || "http://localhost:3000").trim();
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\/$/, "");
+  }
+
+  return `https://${raw.replace(/\/$/, "")}`;
+}
+
+async function sendModerationRequestNotification(input: {
+  actorUserId: string;
+  moduleId: string;
+  assessmentId: string;
+}): Promise<string | null> {
+  const assessment = await prisma.assessmentInstance.findUnique({
+    where: { id: input.assessmentId },
+    select: {
+      id: true,
+      academicYear: true,
+      dueAt: true,
+      markingDeadlineAt: true,
+      moderationRequestedAt: true,
+      moderatorUser: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      assessmentTemplate: {
+        select: {
+          name: true,
+          moduleId: true,
+          isArchived: true,
+          module: {
+            select: {
+              code: true,
+              title: true,
+              memberships: {
+                where: {
+                  active: true,
+                  isLeader: true,
+                },
+                select: {
+                  userId: true,
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!assessment || assessment.assessmentTemplate.moduleId !== input.moduleId) {
+    return null;
+  }
+
+  if (assessment.assessmentTemplate.isArchived || assessment.moderationRequestedAt) {
+    return null;
+  }
+
+  const [totalScripts, remainingUngradedScripts] = await Promise.all([
+    prisma.script.count({
+      where: {
+        assessmentInstanceId: input.assessmentId,
+      },
+    }),
+    prisma.script.count({
+      where: {
+        assessmentInstanceId: input.assessmentId,
+        grade: null,
+      },
+    }),
+  ]);
+
+  if (totalScripts === 0 || remainingUngradedScripts > 0) {
+    return null;
+  }
+
+  const moderatorEmail = assessment.moderatorUser?.email?.trim();
+  if (!moderatorEmail) {
+    return "Assessment is fully marked, but no moderator email is configured.";
+  }
+
+  const leaderEmails = assessment.assessmentTemplate.module.memberships
+    .map((membership) => membership.user.email?.trim())
+    .filter((email): email is string => Boolean(email));
+  const ccEmails = Array.from(new Set(leaderEmails.filter((email) => email !== moderatorEmail))).sort((left, right) =>
+    left.localeCompare(right)
+  );
+  const requestedAt = new Date();
+  const claimed = await prisma.assessmentInstance.updateMany({
+    where: {
+      id: input.assessmentId,
+      moderationRequestedAt: null,
+    },
+    data: {
+      moderationRequestedAt: requestedAt,
+    },
+  });
+
+  if (claimed.count === 0) {
+    return null;
+  }
+
+  const leaderNames = assessment.assessmentTemplate.module.memberships
+    .map((membership) => membership.user.name?.trim())
+    .filter((name): name is string => Boolean(name))
+    .sort((left, right) => left.localeCompare(right));
+  const leaderLabel =
+    leaderNames.length === 0
+      ? "Not assigned"
+      : leaderNames.length === 1
+        ? leaderNames[0]
+        : leaderNames.join(", ");
+  const assessmentPageUrl = `${getAppBaseUrl()}/modules/${input.moduleId}/assessments/${input.assessmentId}`;
+  const subject = `Moderation requested: ${assessment.assessmentTemplate.module.code} ${assessment.assessmentTemplate.name} (${assessment.academicYear})`;
+  const message = [
+    `Module: ${assessment.assessmentTemplate.module.code} - ${assessment.assessmentTemplate.module.title}`,
+    `Assessment: ${assessment.assessmentTemplate.name}`,
+    `Academic year: ${assessment.academicYear}`,
+    `Marking deadline: ${formatEmailDateTime(assessment.markingDeadlineAt)}`,
+    "",
+    "All scripts have now been marked. Please complete the moderation and add your moderation report to the assessment page.",
+    `Assessment page: ${assessmentPageUrl}`,
+    `Module leaders copied: ${leaderLabel}`,
+  ].join("\n");
+
+  try {
+    await sendEmail(moderatorEmail, subject, message, { cc: ccEmails });
+    await recordAuditLog({
+      actorUserId: input.actorUserId,
+      entityType: "AssessmentInstance",
+      entityId: input.assessmentId,
+      action: AuditAction.UPDATE,
+      diff: {
+        operation: "moderation_requested",
+        requestedAt,
+        totalScripts,
+      },
+    });
+  } catch (error) {
+    await prisma.assessmentInstance.updateMany({
+      where: {
+        id: input.assessmentId,
+        moderationRequestedAt: requestedAt,
+      },
+      data: {
+        moderationRequestedAt: null,
+      },
+    });
+    return error instanceof Error ? error.message : "Moderation request email could not be sent.";
+  }
+
+  return null;
 }
 
 export async function updateAssessmentSettingsAction(input: {
@@ -175,6 +362,7 @@ export async function updateAssessmentSettingsAction(input: {
     }
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     if (!context.isAdmin && !context.isModuleLeader) {
       return { ok: false, error: "Only module leaders can edit assessment settings." };
@@ -187,6 +375,7 @@ export async function updateAssessmentSettingsAction(input: {
         assessmentTemplate: {
           select: {
             moduleId: true,
+            isArchived: true,
           },
         },
         dueAt: true,
@@ -207,6 +396,10 @@ export async function updateAssessmentSettingsAction(input: {
       return { ok: false, error: "Assessment not found." };
     }
 
+    if (assessment.assessmentTemplate.isArchived) {
+      return { ok: false, error: "Archived assessments are read-only." };
+    }
+
     if (moderatorUserId) {
       await assertUsersExist([moderatorUserId]);
     }
@@ -217,6 +410,8 @@ export async function updateAssessmentSettingsAction(input: {
         dueAt,
         markingDeadlineAt,
         moderatorUserId,
+        moderationRequestedAt:
+          assessment.moderatorUserId !== moderatorUserId ? null : undefined,
       },
     });
 
@@ -243,9 +438,20 @@ export async function updateAssessmentSettingsAction(input: {
       },
     });
 
+    const moderationRequestWarning = await sendModerationRequestNotification({
+      actorUserId: context.sessionUserId,
+      moduleId,
+      assessmentId,
+    });
+
     revalidateAssessmentPaths(moduleId, assessmentId);
 
-    return { ok: true, message: "Assessment settings updated." };
+    return {
+      ok: true,
+      message: moderationRequestWarning
+        ? `Assessment settings updated. ${moderationRequestWarning}`
+        : "Assessment settings updated.",
+    };
   } catch (error) {
     return {
       ok: false,
@@ -273,6 +479,7 @@ export async function importAssessmentSubmissionsAction(input: {
     const rawText = input.rawText;
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     if (!context.isAdmin && !context.isModuleLeader) {
       return { ok: false, error: "Only module leaders can import submissions." };
@@ -321,6 +528,13 @@ export async function importAssessmentSubmissionsAction(input: {
       })),
     });
 
+    await prisma.assessmentInstance.update({
+      where: { id: assessmentId },
+      data: {
+        moderationRequestedAt: null,
+      },
+    });
+
     await recordAuditLog({
       actorUserId: context.sessionUserId,
       entityType: "AssessmentInstance",
@@ -365,6 +579,7 @@ export async function saveScriptAllocationAction(input: {
     const markerUserId = input.markerUserId?.trim() || null;
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     if (!context.isAdmin && !context.isModuleLeader) {
       return { ok: false, error: "Only module leaders can update allocations." };
@@ -462,6 +677,7 @@ export async function autoAssignUnallocatedScriptsAction(input: {
     const assessmentId = input.assessmentId.trim();
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     if (!context.isAdmin && !context.isModuleLeader) {
       return { ok: false, error: "Only module leaders can auto-assign scripts." };
@@ -566,6 +782,262 @@ export async function autoAssignUnallocatedScriptsAction(input: {
   }
 }
 
+export async function assignAllocationsAction(input: {
+  moduleId: string;
+  assessmentId: string;
+  allocations: Array<{
+    markerUserId: string;
+    count: number;
+  }>;
+}): Promise<ActionResult<{ assignedCount?: number }>> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentId = input.assessmentId.trim();
+
+    const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
+
+    if (!context.isAdmin && !context.isModuleLeader) {
+      return { ok: false, error: "Only module leaders can assign allocations." };
+    }
+
+    const assessment = await prisma.assessmentInstance.findUnique({
+      where: { id: assessmentId },
+      select: {
+        id: true,
+        academicYear: true,
+        markingDeadlineAt: true,
+        assessmentTemplate: {
+          select: {
+            name: true,
+            moduleId: true,
+            module: {
+              select: {
+                code: true,
+                title: true,
+                memberships: {
+                  where: {
+                    active: true,
+                    isLeader: true,
+                  },
+                  select: {
+                    userId: true,
+                    user: {
+                      select: {
+                        name: true,
+                        email: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        scripts: {
+          orderBy: {
+            turnitinId: "asc",
+          },
+          select: {
+            id: true,
+            turnitinId: true,
+          },
+        },
+      },
+    });
+
+    if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
+      return { ok: false, error: "Assessment not found." };
+    }
+
+    if (assessment.scripts.length === 0) {
+      return { ok: false, error: "No submissions are available for allocation." };
+    }
+
+    const markerAssignments = await prisma.assessmentMarker.findMany({
+      where: {
+        assessmentInstanceId: assessmentId,
+        active: true,
+      },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (markerAssignments.length === 0) {
+      return { ok: false, error: "No active markers are available for this assessment." };
+    }
+
+    const allocationEntries = input.allocations.map((allocation) => ({
+      markerUserId: allocation.markerUserId.trim(),
+      count: Math.max(0, Math.trunc(allocation.count)),
+    }));
+    const allocationMap = new Map(
+      allocationEntries.map((allocation) => [allocation.markerUserId, allocation.count])
+    );
+    const activeMarkerIds = new Set(markerAssignments.map((assignment) => assignment.userId));
+
+    if (allocationMap.size !== markerAssignments.length) {
+      return { ok: false, error: "Allocate counts for every active marker before continuing." };
+    }
+
+    for (const markerId of allocationMap.keys()) {
+      if (!activeMarkerIds.has(markerId)) {
+        return { ok: false, error: "Allocation counts must only include active markers on this assessment." };
+      }
+    }
+
+    const markerLookup = new Map(markerAssignments.map((assignment) => [assignment.userId, assignment]));
+    const allocationCounts = allocationEntries.map((allocation) => {
+      const markerAssignment = markerLookup.get(allocation.markerUserId);
+
+      return {
+        markerUserId: allocation.markerUserId,
+        count: allocation.count,
+        email: markerAssignment?.user.email ?? null,
+      };
+    });
+
+    const totalRequested = allocationCounts.reduce((sum, allocation) => sum + allocation.count, 0);
+
+    if (totalRequested !== assessment.scripts.length) {
+      return {
+        ok: false,
+        error: `Allocation counts must total ${assessment.scripts.length} submissions before continuing.`,
+      };
+    }
+
+    const plan: Array<{
+      scriptId: string;
+      turnitinId: string;
+      markerUserId: string;
+      markerEmail: string | null;
+    }> = [];
+
+    let cursor = 0;
+    for (const allocation of allocationCounts) {
+      for (let index = 0; index < allocation.count; index += 1) {
+        const script = assessment.scripts[cursor];
+
+        if (!script) {
+          break;
+        }
+
+        plan.push({
+          scriptId: script.id,
+          turnitinId: script.turnitinId,
+          markerUserId: allocation.markerUserId,
+          markerEmail: allocation.email,
+        });
+
+        cursor += 1;
+      }
+    }
+
+    if (plan.length !== assessment.scripts.length) {
+      return { ok: false, error: "Allocation plan could not cover every submission." };
+    }
+
+    for (const item of plan) {
+      const allocation = await prisma.allocation.upsert({
+        where: { scriptId: item.scriptId },
+        update: {
+          markerUserId: item.markerUserId,
+        },
+        create: {
+          scriptId: item.scriptId,
+          markerUserId: item.markerUserId,
+        },
+        select: { id: true },
+      });
+
+      await recordAuditLog({
+        actorUserId: context.sessionUserId,
+        entityType: "Allocation",
+        entityId: allocation.id,
+        action: AuditAction.UPDATE,
+        diff: {
+          operation: "assign_allocations",
+          scriptId: item.scriptId,
+          turnitinId: item.turnitinId,
+          markerUserIdAfter: item.markerUserId,
+        },
+      });
+    }
+
+    const leaderNames = assessment.assessmentTemplate.module.memberships
+      .map((membership) => membership.user.name?.trim())
+      .filter((name): name is string => Boolean(name))
+      .sort((left, right) => left.localeCompare(right));
+    const leaderLabel =
+      leaderNames.length === 0
+        ? "Not assigned"
+        : leaderNames.length === 1
+          ? leaderNames[0]
+          : leaderNames.join(", ");
+    const subject = `Allocations assigned: ${assessment.assessmentTemplate.module.code} ${assessment.assessmentTemplate.name} (${assessment.academicYear})`;
+    const markingDeadlineText = formatEmailDateTime(assessment.markingDeadlineAt);
+    const appBaseUrl = getAppBaseUrl();
+    const assessmentPageUrl = `${appBaseUrl}/modules/${moduleId}/assessments/${assessmentId}`;
+    const markerNotifications = allocationCounts.filter((allocation) => allocation.count > 0 && allocation.email);
+
+    let emailWarning: string | null = null;
+
+    try {
+      await Promise.all(
+        markerNotifications.map((allocation) =>
+          sendEmail(
+            allocation.email ?? "",
+            subject,
+            [
+              `You have been allocated ${allocation.count} scripts to mark on ${assessment.assessmentTemplate.name} for ${assessment.assessmentTemplate.module.title} (Module leader(s): ${leaderLabel}).`,
+              `The deadline to complete the marking is ${markingDeadlineText}.`,
+              `Assessment page: ${assessmentPageUrl}`,
+            ].join("\n"),
+          )
+        )
+      );
+    } catch (error) {
+      emailWarning = error instanceof Error ? error.message : "Allocation email notification failed.";
+    }
+
+    await recordAuditLog({
+      actorUserId: context.sessionUserId,
+      entityType: "AssessmentInstance",
+      entityId: assessmentId,
+      action: AuditAction.UPDATE,
+      diff: {
+        operation: "assign_allocations",
+        allocations: allocationCounts.map((allocation) => ({
+          markerUserId: allocation.markerUserId,
+          count: allocation.count,
+        })),
+        totalScripts: assessment.scripts.length,
+        moduleLeaderNames: leaderNames,
+      },
+    });
+
+    revalidateAssessmentPaths(moduleId, assessmentId);
+
+    return {
+      ok: true,
+      message: emailWarning ? `Allocations assigned. ${emailWarning}` : "Allocations assigned.",
+      data: { assignedCount: assessment.scripts.length },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to assign allocations.",
+    };
+  }
+}
+
 export async function saveScriptGradeAction(input: {
   moduleId: string;
   assessmentId: string;
@@ -579,6 +1051,7 @@ export async function saveScriptGradeAction(input: {
     const gradeRaw = input.grade.trim();
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     const script = await prisma.script.findUnique({
       where: { id: scriptId },
@@ -642,11 +1115,26 @@ export async function saveScriptGradeAction(input: {
       },
     });
 
+    if (parsedGrade === null) {
+      await prisma.assessmentInstance.update({
+        where: { id: assessmentId },
+        data: {
+          moderationRequestedAt: null,
+        },
+      });
+    }
+
+    const moderationRequestWarning = await sendModerationRequestNotification({
+      actorUserId: context.sessionUserId,
+      moduleId,
+      assessmentId,
+    });
+
     revalidateAssessmentPaths(moduleId, assessmentId);
 
     return {
       ok: true,
-      message: "Grade saved.",
+      message: moderationRequestWarning ? `Grade saved. ${moderationRequestWarning}` : "Grade saved.",
       data: { savedGrade: parsedGrade },
     };
   } catch (error) {
@@ -673,6 +1161,7 @@ export async function saveAssessmentModerationAction(input: {
     }
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     const assessment = await prisma.assessmentInstance.findUnique({
       where: { id: assessmentId },
@@ -810,6 +1299,7 @@ export async function saveReviewFlagAction(input: {
     const notifyLeaderUserIds = normalizeUserIds(input.notifyLeaderUserIds);
 
     const context = await getAssessmentContext(moduleId, assessmentId);
+    assertAssessmentWritable(context);
 
     const script = await prisma.script.findUnique({
       where: { id: scriptId },

@@ -139,17 +139,23 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
 
   const isAdmin = session.user.role === Role.ADMIN;
   const currentMemberships = moduleMemberships.filter((membership) => membership.userId === session.user.id);
+  const currentUserIsLeader = currentMemberships.some((membership) => membership.isLeader);
   const currentUserIsAssessmentMarker = assessment.markerAssignments.some(
     (assignment) => assignment.userId === session.user.id
   );
   const currentUserIsModerator = assessment.moderatorUserId === session.user.id;
+  const isArchived = assessment.assessmentTemplate.isArchived;
 
   if (!isAdmin && currentMemberships.length === 0 && !currentUserIsAssessmentMarker && !currentUserIsModerator) {
     notFound();
   }
 
-  const isModuleLeader = isAdmin || currentMemberships.some((membership) => membership.isLeader);
-  const canManageAssessment = isAdmin || isModuleLeader;
+  if (isArchived && !isAdmin && !currentUserIsLeader) {
+    notFound();
+  }
+
+  const isModuleLeader = isAdmin || currentUserIsLeader;
+  const canManageAssessment = !isArchived && (isAdmin || isModuleLeader);
   const allUsers = canManageAssessment
     ? await prisma.user.findMany({
         orderBy: [{ name: "asc" }, { email: "asc" }],
@@ -162,7 +168,7 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         },
       })
     : [];
-  const canSubmitModeration = assessment.moderatorUserId === session.user.id;
+  const canSubmitModeration = !isArchived && assessment.moderatorUserId === session.user.id;
   const workspaceVersion = assessment.scripts
     .map((script) => `${script.id}:${script.version}:${script.allocation?.markerUserId ?? ""}`)
     .join("|");
@@ -203,12 +209,14 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         ]}
       />
       <AssessmentWorkspaceClient
-        key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}:${assessment.dueAt.getTime()}:${assessment.markingDeadlineAt.getTime()}:${assessment.moderatorUserId ?? ""}`}
+        key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}:${assessment.dueAt.getTime()}:${assessment.markingDeadlineAt.getTime()}:${assessment.moderatorUserId ?? ""}:${assessment.assessmentTemplate.isArchived ? "archived" : "active"}:${assessment.assessmentTemplate.archivedAt?.getTime() ?? 0}`}
         moduleId={moduleId}
         assessmentId={assessmentId}
         moduleCode={assessment.assessmentTemplate.module.code}
         assessmentName={assessment.assessmentTemplate.name}
         academicYear={assessment.academicYear}
+        isArchived={isArchived}
+        archivedAt={assessment.assessmentTemplate.archivedAt ? formatDateTime(assessment.assessmentTemplate.archivedAt) : null}
         dueAt={formatDateTime(assessment.dueAt)}
         markingDeadlineAt={formatDateTime(assessment.markingDeadlineAt)}
         canManageAssessment={canManageAssessment}
@@ -240,7 +248,8 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
           markerUserId: script.allocation?.markerUserId ?? null,
           markerName: script.allocation?.marker ? getDisplayName(script.allocation.marker) : null,
           canMark:
-            isAdmin || isModuleLeader || (script.allocation?.markerUserId ?? null) === session.user.id,
+            !isArchived &&
+            (isAdmin || isModuleLeader || (script.allocation?.markerUserId ?? null) === session.user.id),
           assignedToCurrentUser: (script.allocation?.markerUserId ?? null) === session.user.id,
           reviewFlag: script.reviewFlag
             ? {

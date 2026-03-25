@@ -79,6 +79,13 @@ export default async function ModulePage({ params }: ModulePageProps) {
               },
             },
           },
+          archivedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
         },
       },
       memberships: {
@@ -107,12 +114,14 @@ export default async function ModulePage({ params }: ModulePageProps) {
 
   const currentUserMemberships = moduleRecord.memberships.filter((membership) => membership.userId === session.user.id);
   const currentUserIsLeader = currentUserMemberships.some((membership) => membership.isLeader);
-  const hasAssessmentAccess = moduleRecord.assessmentTemplates.some((template) =>
-    template.assessmentInstances.some(
-      (instance) =>
-        instance.moderatorUser?.id === session.user.id ||
-        instance.markerAssignments.some((assignment) => assignment.userId === session.user.id)
-    )
+  const hasAssessmentAccess = moduleRecord.assessmentTemplates.some(
+    (template) =>
+      !template.isArchived &&
+      template.assessmentInstances.some(
+        (instance) =>
+          instance.moderatorUser?.id === session.user.id ||
+          instance.markerAssignments.some((assignment) => assignment.userId === session.user.id)
+      )
   );
   const isAllowed = session.user.role === Role.ADMIN || currentUserIsLeader || hasAssessmentAccess;
   const canManageModule = session.user.role === Role.ADMIN || currentUserIsLeader;
@@ -134,18 +143,23 @@ export default async function ModulePage({ params }: ModulePageProps) {
       })
     : [];
 
-  const visibleAssessmentTemplates = canManageModule
-    ? moduleRecord.assessmentTemplates
-    : moduleRecord.assessmentTemplates
-        .map((template) => ({
-          ...template,
-          assessmentInstances: template.assessmentInstances.filter(
+  const activeAssessmentTemplates = moduleRecord.assessmentTemplates
+    .filter((template) => !template.isArchived)
+    .map((template) => ({
+      ...template,
+      assessmentInstances: canManageModule
+        ? template.assessmentInstances
+        : template.assessmentInstances.filter(
             (instance) =>
               instance.moderatorUser?.id === session.user.id ||
               instance.markerAssignments.some((assignment) => assignment.userId === session.user.id)
           ),
-        }))
-        .filter((template) => template.assessmentInstances.length > 0);
+    }))
+    .filter((template) => template.assessmentInstances.length > 0);
+
+  const archivedAssessmentTemplates = canManageModule
+    ? moduleRecord.assessmentTemplates.filter((template) => template.isArchived)
+    : [];
 
   return (
     <>
@@ -182,9 +196,40 @@ export default async function ModulePage({ params }: ModulePageProps) {
               ? undefined
               : "Invitation pending",
         }))}
-        assessments={visibleAssessmentTemplates.map((template) => ({
+        assessments={activeAssessmentTemplates.map((template) => ({
           id: template.id,
           name: template.name,
+          instances: template.assessmentInstances.map((instance) => ({
+            id: instance.id,
+            label: `${template.name} / ${instance.academicYear}`,
+            academicYear: instance.academicYear,
+            dueAt: formatDateTime(instance.dueAt),
+            markingDeadlineAt: formatDateTime(instance.markingDeadlineAt),
+            moderatorName: instance.moderatorUser ? getDisplayName(instance.moderatorUser) : null,
+            moderationStatus: formatModerationStatus(instance.moderationStatus),
+            totalScripts: instance.scripts.length,
+            markedScripts: instance.scripts.filter((script) => script.grade !== null).length,
+            teamMembers: instance.markerAssignments.map((assignment) => ({
+              userId: assignment.user.id,
+              displayName: getDisplayName(assignment.user),
+              email: assignment.user.email,
+              meta:
+                assignment.user.passwordHash && assignment.user.emailVerified
+                  ? undefined
+                  : "Invitation pending",
+            })),
+          })),
+        }))}
+        archivedAssessments={archivedAssessmentTemplates.map((template) => ({
+          id: template.id,
+          name: template.name,
+          archivedAt: template.archivedAt ? formatDateTime(template.archivedAt) : "Not set",
+          archivedBy: template.archivedBy ? getDisplayName(template.archivedBy) : "Unknown",
+          totalScripts: template.assessmentInstances.reduce((sum, instance) => sum + instance.scripts.length, 0),
+          totalMarkedScripts: template.assessmentInstances.reduce(
+            (sum, instance) => sum + instance.scripts.filter((script) => script.grade !== null).length,
+            0
+          ),
           instances: template.assessmentInstances.map((instance) => ({
             id: instance.id,
             label: `${template.name} / ${instance.academicYear}`,

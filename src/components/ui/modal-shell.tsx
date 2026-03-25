@@ -57,7 +57,7 @@ export function ModalShell({
       <div
         role="dialog"
         aria-modal="true"
-        className={`relative z-10 w-full rounded-[28px] border border-white/70 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.18)] ${widthClassName}`}
+        className={`relative z-10 flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white p-6 shadow-[0_30px_80px_rgba(15,23,42,0.18)] ${widthClassName}`}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -73,7 +73,7 @@ export function ModalShell({
           </button>
         </div>
 
-        <div className="mt-6">{children}</div>
+        <div className="mt-6 overflow-y-auto pr-1">{children}</div>
       </div>
     </div>
   );

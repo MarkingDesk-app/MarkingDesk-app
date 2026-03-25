@@ -1,6 +1,6 @@
 "use server";
 
-import { Role } from "@prisma/client";
+import { AuditAction, Role } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { getServerSession } from "next-auth";
 
@@ -12,6 +12,7 @@ import {
   saveAssessmentMarkerAssignment,
 } from "@/lib/assessment-team";
 import { authOptions } from "@/lib/auth";
+import { recordAuditLog } from "@/lib/audit";
 import { inviteUser } from "@/lib/user-invitations";
 import { prisma } from "@/lib/prisma";
 
@@ -82,6 +83,30 @@ async function ensureModuleHasAnotherLeader(moduleId: string, excludedUserId: st
   }
 }
 
+async function getAssessmentTemplateForModule(moduleId: string, assessmentTemplateId: string) {
+  const template = await prisma.assessmentTemplate.findUnique({
+    where: { id: assessmentTemplateId },
+    select: {
+      id: true,
+      moduleId: true,
+      name: true,
+      isArchived: true,
+      archivedAt: true,
+      assessmentInstances: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  });
+
+  if (!template || template.moduleId !== moduleId) {
+    throw new Error("Assessment does not belong to this module.");
+  }
+
+  return template;
+}
+
 export async function createAssessmentAction(input: {
   moduleId: string;
   name: string;
@@ -95,6 +120,23 @@ export async function createAssessmentAction(input: {
     }
 
     await getModuleManagementSession(moduleId);
+
+    const existingAssessment = await prisma.assessmentTemplate.findUnique({
+      where: {
+        moduleId_name: {
+          moduleId,
+          name,
+        },
+      },
+      select: {
+        id: true,
+        isArchived: true,
+      },
+    });
+
+    if (existingAssessment?.isArchived) {
+      return { ok: false, error: "An archived assessment with this name already exists." };
+    }
 
     await prisma.assessmentTemplate.upsert({
       where: {
@@ -154,13 +196,10 @@ export async function createAcademicYearAction(input: {
 
     await getModuleManagementSession(moduleId);
 
-    const template = await prisma.assessmentTemplate.findUnique({
-      where: { id: assessmentTemplateId },
-      select: { id: true, moduleId: true },
-    });
+    const template = await getAssessmentTemplateForModule(moduleId, assessmentTemplateId);
 
-    if (!template || template.moduleId !== moduleId) {
-      return { ok: false, error: "Assessment does not belong to this module." };
+    if (template.isArchived) {
+      return { ok: false, error: "Archived assessments cannot be edited." };
     }
 
     if (moderatorUserId) {
@@ -203,6 +242,65 @@ export async function createAcademicYearAction(input: {
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to save the academic year.",
+    };
+  }
+}
+
+export async function archiveAssessmentAction(input: {
+  moduleId: string;
+  assessmentTemplateId: string;
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentTemplateId = input.assessmentTemplateId.trim();
+
+    if (!moduleId || !assessmentTemplateId) {
+      return { ok: false, error: "Assessment details are required." };
+    }
+
+    const session = await getModuleManagementSession(moduleId);
+    const template = await getAssessmentTemplateForModule(moduleId, assessmentTemplateId);
+
+    if (template.isArchived) {
+      return { ok: true, message: "Assessment already archived." };
+    }
+
+    const archivedAt = new Date();
+
+    await prisma.assessmentTemplate.update({
+      where: { id: assessmentTemplateId },
+      data: {
+        isArchived: true,
+        archivedAt,
+        archivedByUserId: session.user.id,
+      },
+    });
+
+    await recordAuditLog({
+      actorUserId: session.user.id,
+      entityType: "AssessmentTemplate",
+      entityId: assessmentTemplateId,
+      action: AuditAction.UPDATE,
+      diff: {
+        operation: "archive_assessment_template",
+        archivedAt,
+        archivedByUserId: session.user.id,
+        assessmentInstanceIds: template.assessmentInstances.map((assessmentInstance) => assessmentInstance.id),
+      },
+    });
+
+    revalidatePath(`/modules/${moduleId}`);
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/timeline");
+    for (const assessmentInstance of template.assessmentInstances) {
+      revalidatePath(`/modules/${moduleId}/assessments/${assessmentInstance.id}`);
+    }
+
+    return { ok: true, message: "Assessment archived." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to archive the assessment.",
     };
   }
 }
@@ -394,6 +492,7 @@ export async function saveAssessmentMarkerAction(input: {
         assessmentTemplate: {
           select: {
             moduleId: true,
+            isArchived: true,
           },
         },
       },
@@ -401,6 +500,10 @@ export async function saveAssessmentMarkerAction(input: {
 
     if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
       return { ok: false, error: "Assessment not found." };
+    }
+
+    if (assessment.assessmentTemplate.isArchived) {
+      return { ok: false, error: "Archived assessments cannot be edited." };
     }
 
     await saveAssessmentMarkerAssignment({
@@ -444,6 +547,7 @@ export async function deactivateAssessmentMarkerAction(input: {
         assessmentTemplate: {
           select: {
             moduleId: true,
+            isArchived: true,
           },
         },
       },
@@ -451,6 +555,10 @@ export async function deactivateAssessmentMarkerAction(input: {
 
     if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
       return { ok: false, error: "Assessment not found." };
+    }
+
+    if (assessment.assessmentTemplate.isArchived) {
+      return { ok: false, error: "Archived assessments cannot be edited." };
     }
 
     await deactivateAssessmentMarkerAssignment({
@@ -491,6 +599,7 @@ export async function inviteAssessmentMarkerAction(input: {
         assessmentTemplate: {
           select: {
             moduleId: true,
+            isArchived: true,
           },
         },
       },
@@ -498,6 +607,10 @@ export async function inviteAssessmentMarkerAction(input: {
 
     if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
       return { ok: false, error: "Assessment not found." };
+    }
+
+    if (assessment.assessmentTemplate.isArchived) {
+      return { ok: false, error: "Archived assessments cannot be edited." };
     }
 
     const invited = await inviteUser({
