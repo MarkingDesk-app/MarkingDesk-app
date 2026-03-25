@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { ArrowRight, Clock3, Plus, Rows3, X } from "lucide-react";
+import { useDeferredValue, useMemo, useState, useTransition } from "react";
+import { Clock3, Plus, Rows3, Search, ShieldCheck, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -31,6 +31,7 @@ type ModuleSummary = {
 
 type DashboardClientProps = {
   currentUserId: string;
+  isAdmin: boolean;
   modules: ModuleSummary[];
   allUsers: UserPickerOption[];
 };
@@ -58,21 +59,36 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   );
 }
 
-export function DashboardClient({ currentUserId, modules, allUsers }: DashboardClientProps) {
+export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: DashboardClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [showCreateModuleModal, setShowCreateModuleModal] = useState(false);
   const [moduleCode, setModuleCode] = useState("");
   const [moduleTitle, setModuleTitle] = useState("");
+  const [moduleSearchQuery, setModuleSearchQuery] = useState("");
   const [leaderPickerValue, setLeaderPickerValue] = useState(currentUserId);
   const [selectedLeaderIds, setSelectedLeaderIds] = useState<string[]>([currentUserId]);
+  const deferredModuleSearchQuery = useDeferredValue(moduleSearchQuery);
 
   const selectedLeaders = selectedLeaderIds
     .map((leaderId) => allUsers.find((user) => user.id === leaderId))
     .filter(Boolean) as UserPickerOption[];
 
   const selectedLeaderSet = useMemo(() => new Set(selectedLeaderIds), [selectedLeaderIds]);
+  const filteredModules = useMemo(() => {
+    const normalizedQuery = deferredModuleSearchQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return modules;
+    }
+
+    return modules.filter((module) =>
+      [module.code, module.title, module.leaderSummary].some((value) =>
+        value.toLowerCase().includes(normalizedQuery)
+      )
+    );
+  }, [deferredModuleSearchQuery, modules]);
 
   const resetCreateModuleForm = () => {
     setModuleCode("");
@@ -116,52 +132,73 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button variant="secondary" asChild>
-          <Link href="/dashboard/timeline">
-            <Rows3 className="h-4 w-4" />
-            View timeline
-          </Link>
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => {
-            resetCreateModuleForm();
-            setShowCreateModuleModal(true);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Create module
-        </Button>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <label className="relative block w-full max-w-xl">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={moduleSearchQuery}
+            onChange={(event) => setModuleSearchQuery(event.target.value)}
+            aria-label="Search modules"
+            placeholder="Search modules by code, title, or leader"
+            className="w-full rounded-2xl border border-slate-200 bg-white/85 py-3 pl-11 pr-4 text-sm text-slate-700 outline-none ring-sky-500 focus:ring-2"
+          />
+        </label>
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="secondary" asChild>
+            <Link href="/dashboard/timeline">
+              <Rows3 className="h-4 w-4" />
+              View timeline
+            </Link>
+          </Button>
+          {isAdmin ? (
+            <Button variant="secondary" asChild>
+              <Link href="/admin">
+                <ShieldCheck className="h-4 w-4" />
+                Admin
+              </Link>
+            </Button>
+          ) : null}
+          <Button
+            variant="secondary"
+            onClick={() => {
+              resetCreateModuleForm();
+              setShowCreateModuleModal(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Create module
+          </Button>
+        </div>
       </div>
 
       <FeedbackMessage feedback={feedback} />
 
       <section id="modules" className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Modules</h2>
-          </div>
-        </div>
-
         {modules.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-sm text-slate-600">
               No modules assigned yet. Create a module or wait to be added to one.
             </CardContent>
           </Card>
+        ) : filteredModules.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-sm text-slate-600">
+              No modules match <span className="font-medium text-slate-900">{moduleSearchQuery.trim()}</span>.
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid gap-4 xl:grid-cols-2">
-            {modules.map((module) => (
+            {filteredModules.map((module) => (
               <Link
                 key={module.id}
                 href={`/modules/${module.id}`}
-                className="group rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-200"
+                className="group rounded-[26px] border border-white/70 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-200"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{module.code}</p>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{module.title}</h3>
+                    <h3 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{module.title}</h3>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {module.currentUserIsLeader ? (
@@ -178,9 +215,9 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
                   </div>
                 </div>
 
-                <p className="mt-3 text-sm text-slate-600">{module.leaderSummary}</p>
+                <p className="mt-2 text-sm text-slate-600">{module.leaderSummary}</p>
 
-                <div className="mt-5 grid gap-4">
+                <div className="mt-4 grid gap-3">
                   <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
                       Overall Marking Progress
@@ -227,11 +264,6 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
                       </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-sky-700">
-                  Open module
-                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
                 </div>
               </Link>
             ))}

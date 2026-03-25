@@ -218,6 +218,7 @@ export default async function DashboardPage() {
       <PageBreadcrumbs items={[{ label: "Dashboard", href: "/dashboard", current: true }]} />
       <DashboardClient
         currentUserId={session.user.id}
+        isAdmin={session.user.role === Role.ADMIN}
         modules={modules}
         allUsers={users.map((user) => ({
           id: user.id,

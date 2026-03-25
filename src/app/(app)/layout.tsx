@@ -4,7 +4,6 @@ import { Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 
-import { AppTopNav } from "@/components/app-top-nav";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { BreadcrumbProvider } from "@/components/breadcrumb-context";
@@ -42,21 +41,17 @@ export default async function ProtectedLayout({
               </Link>
 
               <div className="flex flex-col gap-3 lg:items-end">
-                <div className="flex flex-wrap items-center gap-3">
-                  <AppTopNav isAdmin={session.user.role === Role.ADMIN} />
-
-                  <div className="flex items-center gap-3 rounded-2xl border border-white/70 bg-white/85 px-3 py-2 shadow-sm">
-                    <div className="hidden text-right sm:block">
-                      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signed in as</p>
-                      <p className="max-w-[14rem] truncate text-sm font-medium text-slate-900">{displayName}</p>
-                    </div>
-                    {session.user.role === Role.ADMIN ? (
-                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
-                        Admin
-                      </span>
-                    ) : null}
-                    <SignOutButton />
+                <div className="flex items-center gap-3 rounded-2xl border border-white/70 bg-white/85 px-3 py-2 shadow-sm">
+                  <div className="hidden text-right sm:block">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Signed in as</p>
+                    <p className="max-w-[14rem] truncate text-sm font-medium text-slate-900">{displayName}</p>
                   </div>
+                  {session.user.role === Role.ADMIN ? (
+                    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
+                      Admin
+                    </span>
+                  ) : null}
+                  <SignOutButton />
                 </div>
 
                 <AppBreadcrumbs />
