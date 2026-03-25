@@ -41,6 +41,10 @@ type Feedback = {
   message: string;
 } | null;
 
+function getAllocationProgressPercentage(marked: number, allocated: number): number {
+  return allocated === 0 ? 0 : Math.round((marked / allocated) * 100);
+}
+
 function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   if (!feedback) {
     return null;
@@ -188,85 +192,106 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
-            {filteredModules.map((module) => (
-              <Link
-                key={module.id}
-                href={`/modules/${module.id}`}
-                className="group rounded-[26px] border border-white/70 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-200"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{module.code}</p>
-                    <h3 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{module.title}</h3>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {module.currentUserIsLeader ? (
-                      <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">
-                        Module leader
-                      </span>
-                    ) : null}
-                    {module.currentUserIsModerator ? (
-                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
-                        Moderator on {module.moderatedAssessments} assessment
-                        {module.moderatedAssessments === 1 ? "" : "s"}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
+          <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+            {filteredModules.map((module) => {
+              const myProgressPercentage = getAllocationProgressPercentage(
+                module.myMarkedScripts,
+                module.myAllocatedScripts
+              );
 
-                <p className="mt-2 text-sm text-slate-600">{module.leaderSummary}</p>
-
-                <div className="mt-4 grid gap-3">
-                  <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                      Overall Marking Progress
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                      {module.markedScripts}/{module.totalScripts} completed
-                    </p>
-                    <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-slate-200/70">
-                      <div
-                        className="h-full rounded-full bg-sky-600 transition-[width]"
-                        style={{ width: `${module.progressPercentage}%` }}
-                      />
+              return (
+                <Link
+                  key={module.id}
+                  href={`/modules/${module.id}`}
+                  className="group rounded-[24px] border border-white/70 bg-white/85 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-200"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                        {module.code}
+                      </p>
+                      <h3 className="mt-1 line-clamp-2 text-[1.35rem] font-semibold leading-tight tracking-tight text-slate-950">
+                        {module.title}
+                      </h3>
+                      <p className="mt-1 line-clamp-1 text-sm text-slate-600">{module.leaderSummary}</p>
                     </div>
-                    <p className="mt-3 text-sm text-slate-500">{module.remainingScripts} submissions remaining</p>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {module.currentUserIsLeader ? (
+                        <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-800">
+                          Module leader
+                        </span>
+                      ) : null}
+                      {module.currentUserIsModerator ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-800">
+                          Moderator on {module.moderatedAssessments}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-[1fr_0.9fr]">
-                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_minmax(0,0.9fr)]">
+                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                        Overall Marking Progress
+                      </p>
+                      <div className="mt-2 flex items-baseline justify-between gap-3">
+                        <p className="text-xl font-semibold tracking-tight text-slate-950">
+                          {module.markedScripts}/{module.totalScripts}
+                        </p>
+                        <p className="text-xs font-medium text-slate-500">{module.progressPercentage}%</p>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200/70">
+                        <div
+                          className="h-full rounded-full bg-sky-600 transition-[width]"
+                          style={{ width: `${module.progressPercentage}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-sm text-slate-500">{module.remainingScripts} remaining</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                         Your Allocation Progress
                       </p>
                       {module.myAllocatedScripts > 0 ? (
                         <>
-                          <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-                            {module.myMarkedScripts}/{module.myAllocatedScripts} marked
-                          </p>
-                          <p className="mt-3 text-sm text-slate-500">
+                          <div className="mt-2 flex items-baseline justify-between gap-3">
+                            <p className="text-xl font-semibold tracking-tight text-slate-950">
+                              {module.myMarkedScripts}/{module.myAllocatedScripts}
+                            </p>
+                            <p className="text-xs font-medium text-slate-500">{myProgressPercentage}%</p>
+                          </div>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200/70">
+                            <div
+                              className="h-full rounded-full bg-emerald-600 transition-[width]"
+                              style={{ width: `${myProgressPercentage}%` }}
+                            />
+                          </div>
+                          <p className="mt-2 text-sm text-slate-500">
                             {module.myAllocatedScripts - module.myMarkedScripts} still on your list
                           </p>
                         </>
                       ) : (
-                        <p className="mt-3 text-sm text-slate-500">No scripts allocated to you.</p>
+                        <p className="mt-2 text-sm text-slate-500">No scripts allocated to you.</p>
                       )}
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Next Deadline</p>
-                      <div className="mt-3 flex items-start gap-3">
-                        <Clock3 className="mt-0.5 h-4 w-4 text-sky-600" />
-                        <div className="space-y-2 text-sm text-slate-600">
+                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                        Next Deadline
+                      </p>
+                      <div className="mt-2 flex items-start gap-3 text-sm text-slate-600">
+                        <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                        <div className="space-y-1">
                           <p>{module.nextDeadline}</p>
-                          <p>{module.assessments} assessments in this module</p>
+                          <p>{module.assessments} assessments</p>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              );
+            })}
           </div>
         )}
       </section>
