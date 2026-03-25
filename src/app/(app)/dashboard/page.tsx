@@ -7,6 +7,7 @@ import { PageBreadcrumbs } from "@/components/breadcrumb-context";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
+import type { UserPickerOption } from "@/components/ui/user-picker";
 
 function formatDeadline(date: Date | null): string {
   if (!date) {
@@ -31,30 +32,19 @@ function summarizeModule(module: {
       id: string;
       dueAt: Date;
       moderatorUserId: string | null;
-      scripts: { id: string; grade: number | null; allocation: { markerUserId: string } | null }[];
+      totalScripts: number;
+      markedScripts: number;
+      myAllocatedScripts: number;
+      myMarkedScripts: number;
     }[];
   }[];
 }, currentUserId: string) {
   const allInstances = module.assessmentTemplates.flatMap((template) => template.assessmentInstances);
-  const totalScripts = allInstances.reduce((sum, instance) => sum + instance.scripts.length, 0);
-  const markedScripts = allInstances.reduce(
-    (sum, instance) => sum + instance.scripts.filter((script) => script.grade !== null).length,
-    0
-  );
+  const totalScripts = allInstances.reduce((sum, instance) => sum + instance.totalScripts, 0);
+  const markedScripts = allInstances.reduce((sum, instance) => sum + instance.markedScripts, 0);
   const remainingScripts = totalScripts - markedScripts;
-  const myAllocatedScripts = allInstances.reduce(
-    (sum, instance) =>
-      sum + instance.scripts.filter((script) => script.allocation?.markerUserId === currentUserId).length,
-    0
-  );
-  const myMarkedScripts = allInstances.reduce(
-    (sum, instance) =>
-      sum +
-      instance.scripts.filter(
-        (script) => script.allocation?.markerUserId === currentUserId && script.grade !== null
-      ).length,
-    0
-  );
+  const myAllocatedScripts = allInstances.reduce((sum, instance) => sum + instance.myAllocatedScripts, 0);
+  const myMarkedScripts = allInstances.reduce((sum, instance) => sum + instance.myMarkedScripts, 0);
   const nextDeadline = allInstances
     .map((instance) => instance.dueAt)
     .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
@@ -90,6 +80,10 @@ function summarizeModule(module: {
   };
 }
 
+function buildCountMap(rows: { assessmentInstanceId: string; _count: { _all: number } }[]) {
+  return new Map(rows.map((row) => [row.assessmentInstanceId, row._count._all]));
+}
+
 async function getDashboardModules(userId: string, role: Role) {
   const includeConfig = {
     memberships: {
@@ -116,15 +110,9 @@ async function getDashboardModules(userId: string, role: Role) {
             id: true,
             dueAt: true,
             moderatorUserId: true,
-            scripts: {
+            _count: {
               select: {
-                id: true,
-                grade: true,
-                allocation: {
-                  select: {
-                    markerUserId: true,
-                  },
-                },
+                scripts: true,
               },
             },
           },
@@ -133,63 +121,128 @@ async function getDashboardModules(userId: string, role: Role) {
     },
   } as const;
 
-  if (role === Role.ADMIN) {
-    const modules = await prisma.module.findMany({
-      orderBy: { code: "asc" },
-      include: includeConfig,
-    });
-
-    return modules.map((module) => summarizeModule(module, userId));
-  }
-
   const modules = await prisma.module.findMany({
-    where: {
-      OR: [
-        {
-          memberships: {
-            some: {
-              userId,
-              active: true,
-              isLeader: true,
-            },
-          },
-        },
-        {
-          assessmentTemplates: {
-            some: {
-              isArchived: false,
-              assessmentInstances: {
-                some: {
-                  moderatorUserId: userId,
+    where:
+      role === Role.ADMIN
+        ? undefined
+        : {
+            OR: [
+              {
+                memberships: {
+                  some: {
+                    userId,
+                    active: true,
+                    isLeader: true,
+                  },
                 },
               },
-            },
-          },
-        },
-        {
-          assessmentTemplates: {
-            some: {
-              isArchived: false,
-              assessmentInstances: {
-                some: {
-                  markerAssignments: {
-                    some: {
-                      userId,
-                      active: true,
+              {
+                assessmentTemplates: {
+                  some: {
+                    isArchived: false,
+                    assessmentInstances: {
+                      some: {
+                        moderatorUserId: userId,
+                      },
                     },
                   },
                 },
               },
-            },
+              {
+                assessmentTemplates: {
+                  some: {
+                    isArchived: false,
+                    assessmentInstances: {
+                      some: {
+                        markerAssignments: {
+                          some: {
+                            userId,
+                            active: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
           },
-        },
-      ],
-    },
     include: includeConfig,
     orderBy: { code: "asc" },
   });
 
-  return modules.map((module) => summarizeModule(module, userId));
+  const instanceIds = modules.flatMap((module) =>
+    module.assessmentTemplates.flatMap((template) => template.assessmentInstances.map((instance) => instance.id))
+  );
+
+  const [markedCounts, myAllocationCounts, myMarkedCounts] = instanceIds.length
+    ? await Promise.all([
+        prisma.script.groupBy({
+          by: ["assessmentInstanceId"],
+          where: {
+            assessmentInstanceId: { in: instanceIds },
+            grade: { not: null },
+          },
+          _count: {
+            _all: true,
+          },
+        }),
+        prisma.script.groupBy({
+          by: ["assessmentInstanceId"],
+          where: {
+            assessmentInstanceId: { in: instanceIds },
+            allocation: {
+              is: {
+                markerUserId: userId,
+              },
+            },
+          },
+          _count: {
+            _all: true,
+          },
+        }),
+        prisma.script.groupBy({
+          by: ["assessmentInstanceId"],
+          where: {
+            assessmentInstanceId: { in: instanceIds },
+            grade: { not: null },
+            allocation: {
+              is: {
+                markerUserId: userId,
+              },
+            },
+          },
+          _count: {
+            _all: true,
+          },
+        }),
+      ])
+    : [[], [], []];
+
+  const markedCountByInstanceId = buildCountMap(markedCounts);
+  const myAllocationCountByInstanceId = buildCountMap(myAllocationCounts);
+  const myMarkedCountByInstanceId = buildCountMap(myMarkedCounts);
+
+  return modules.map((module) =>
+    summarizeModule(
+      {
+        ...module,
+        assessmentTemplates: module.assessmentTemplates.map((template) => ({
+          ...template,
+          assessmentInstances: template.assessmentInstances.map((instance) => ({
+            id: instance.id,
+            dueAt: instance.dueAt,
+            moderatorUserId: instance.moderatorUserId,
+            totalScripts: instance._count.scripts,
+            markedScripts: markedCountByInstanceId.get(instance.id) ?? 0,
+            myAllocatedScripts: myAllocationCountByInstanceId.get(instance.id) ?? 0,
+            myMarkedScripts: myMarkedCountByInstanceId.get(instance.id) ?? 0,
+          })),
+        })),
+      },
+      userId
+    )
+  );
 }
 
 export default async function DashboardPage() {
@@ -199,19 +252,12 @@ export default async function DashboardPage() {
     redirect("/auth/sign-in");
   }
 
-  const [modules, users] = await Promise.all([
-    getDashboardModules(session.user.id, session.user.role),
-    prisma.user.findMany({
-      orderBy: [{ name: "asc" }, { email: "asc" }],
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        passwordHash: true,
-        emailVerified: true,
-      },
-    }),
-  ]);
+  const modules = await getDashboardModules(session.user.id, session.user.role);
+  const currentUserOption: UserPickerOption = {
+    id: session.user.id,
+    name: session.user.name?.trim() || session.user.email?.trim() || "Current user",
+    email: session.user.email?.trim() || "",
+  };
 
   return (
     <>
@@ -220,15 +266,7 @@ export default async function DashboardPage() {
         currentUserId={session.user.id}
         isAdmin={session.user.role === Role.ADMIN}
         modules={modules}
-        allUsers={users.map((user) => ({
-          id: user.id,
-          name: getDisplayName(user),
-          email: user.email,
-          meta:
-            user.passwordHash && user.emailVerified
-              ? undefined
-              : "Invitation pending",
-        }))}
+        currentUserOption={currentUserOption}
       />
     </>
   );

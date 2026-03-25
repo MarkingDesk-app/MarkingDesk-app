@@ -438,19 +438,11 @@ export async function updateAssessmentSettingsAction(input: {
       },
     });
 
-    const moderationRequestWarning = await sendModerationRequestNotification({
-      actorUserId: context.sessionUserId,
-      moduleId,
-      assessmentId,
-    });
-
     revalidateAssessmentPaths(moduleId, assessmentId);
 
     return {
       ok: true,
-      message: moderationRequestWarning
-        ? `Assessment settings updated. ${moderationRequestWarning}`
-        : "Assessment settings updated.",
+      message: "Assessment settings updated.",
     };
   } catch (error) {
     return {
@@ -1124,11 +1116,14 @@ export async function saveScriptGradeAction(input: {
       });
     }
 
-    const moderationRequestWarning = await sendModerationRequestNotification({
-      actorUserId: context.sessionUserId,
-      moduleId,
-      assessmentId,
-    });
+    const moderationRequestWarning =
+      script.grade === null && parsedGrade !== null
+        ? await sendModerationRequestNotification({
+            actorUserId: context.sessionUserId,
+            moduleId,
+            assessmentId,
+          })
+        : null;
 
     revalidateAssessmentPaths(moduleId, assessmentId);
 

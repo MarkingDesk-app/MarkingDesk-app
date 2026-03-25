@@ -13,6 +13,10 @@ type ModulePageProps = {
   params: Promise<{ moduleId: string }>;
 };
 
+function buildMarkedCountMap(rows: { assessmentInstanceId: string; _count: { _all: number } }[]) {
+  return new Map(rows.map((row) => [row.assessmentInstanceId, row._count._all]));
+}
+
 function formatDateTime(date: Date | null): string {
   if (!date) {
     return "Not set";
@@ -66,15 +70,9 @@ export default async function ModulePage({ params }: ModulePageProps) {
                   email: true,
                 },
               },
-              scripts: {
+              _count: {
                 select: {
-                  id: true,
-                  grade: true,
-                  allocation: {
-                    select: {
-                      markerUserId: true,
-                    },
-                  },
+                  scripts: true,
                 },
               },
             },
@@ -130,18 +128,22 @@ export default async function ModulePage({ params }: ModulePageProps) {
     notFound();
   }
 
-  const users = canManageModule
-    ? await prisma.user.findMany({
-        orderBy: [{ name: "asc" }, { email: "asc" }],
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          passwordHash: true,
-          emailVerified: true,
+  const allInstanceIds = moduleRecord.assessmentTemplates.flatMap((template) =>
+    template.assessmentInstances.map((instance) => instance.id)
+  );
+  const markedScriptCounts = allInstanceIds.length
+    ? await prisma.script.groupBy({
+        by: ["assessmentInstanceId"],
+        where: {
+          assessmentInstanceId: { in: allInstanceIds },
+          grade: { not: null },
+        },
+        _count: {
+          _all: true,
         },
       })
     : [];
+  const markedScriptCountByInstanceId = buildMarkedCountMap(markedScriptCounts);
 
   const activeAssessmentTemplates = moduleRecord.assessmentTemplates
     .filter((template) => !template.isArchived)
@@ -187,15 +189,6 @@ export default async function ModulePage({ params }: ModulePageProps) {
                 ? undefined
                 : "Invitation pending",
           }))}
-        allUsers={users.map((user) => ({
-          id: user.id,
-          name: getDisplayName(user),
-          email: user.email,
-          meta:
-            user.passwordHash && user.emailVerified
-              ? undefined
-              : "Invitation pending",
-        }))}
         assessments={activeAssessmentTemplates.map((template) => ({
           id: template.id,
           name: template.name,
@@ -207,8 +200,8 @@ export default async function ModulePage({ params }: ModulePageProps) {
             markingDeadlineAt: formatDateTime(instance.markingDeadlineAt),
             moderatorName: instance.moderatorUser ? getDisplayName(instance.moderatorUser) : null,
             moderationStatus: formatModerationStatus(instance.moderationStatus),
-            totalScripts: instance.scripts.length,
-            markedScripts: instance.scripts.filter((script) => script.grade !== null).length,
+            totalScripts: instance._count.scripts,
+            markedScripts: markedScriptCountByInstanceId.get(instance.id) ?? 0,
             teamMembers: instance.markerAssignments.map((assignment) => ({
               userId: assignment.user.id,
               displayName: getDisplayName(assignment.user),
@@ -225,9 +218,9 @@ export default async function ModulePage({ params }: ModulePageProps) {
           name: template.name,
           archivedAt: template.archivedAt ? formatDateTime(template.archivedAt) : "Not set",
           archivedBy: template.archivedBy ? getDisplayName(template.archivedBy) : "Unknown",
-          totalScripts: template.assessmentInstances.reduce((sum, instance) => sum + instance.scripts.length, 0),
+          totalScripts: template.assessmentInstances.reduce((sum, instance) => sum + instance._count.scripts, 0),
           totalMarkedScripts: template.assessmentInstances.reduce(
-            (sum, instance) => sum + instance.scripts.filter((script) => script.grade !== null).length,
+            (sum, instance) => sum + (markedScriptCountByInstanceId.get(instance.id) ?? 0),
             0
           ),
           instances: template.assessmentInstances.map((instance) => ({
@@ -238,8 +231,8 @@ export default async function ModulePage({ params }: ModulePageProps) {
             markingDeadlineAt: formatDateTime(instance.markingDeadlineAt),
             moderatorName: instance.moderatorUser ? getDisplayName(instance.moderatorUser) : null,
             moderationStatus: formatModerationStatus(instance.moderationStatus),
-            totalScripts: instance.scripts.length,
-            markedScripts: instance.scripts.filter((script) => script.grade !== null).length,
+            totalScripts: instance._count.scripts,
+            markedScripts: markedScriptCountByInstanceId.get(instance.id) ?? 0,
             teamMembers: instance.markerAssignments.map((assignment) => ({
               userId: assignment.user.id,
               displayName: getDisplayName(assignment.user),

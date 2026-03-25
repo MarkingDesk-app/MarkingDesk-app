@@ -16,11 +16,11 @@ import {
   saveAssessmentMarkerAction,
   saveModuleMembershipAction,
 } from "./actions";
+import { AsyncUserMultiPicker } from "@/components/ui/async-user-multi-picker";
+import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { UserMultiPicker } from "@/components/ui/user-multi-picker";
-import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
 type ModuleLeader = {
   id: string;
@@ -71,7 +71,6 @@ type ModulePageClientProps = {
   canManageModule: boolean;
   currentUserIsLeader: boolean;
   moduleLeaders: ModuleLeader[];
-  allUsers: UserPickerOption[];
   assessments: AssessmentSummary[];
   archivedAssessments: ArchivedAssessmentSummary[];
 };
@@ -106,7 +105,6 @@ export function ModulePageClient({
   canManageModule,
   currentUserIsLeader,
   moduleLeaders,
-  allUsers,
   assessments,
   archivedAssessments,
 }: ModulePageClientProps) {
@@ -657,8 +655,7 @@ export function ModulePageClient({
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
               />
             </div>
-            <UserPicker
-              options={allUsers}
+            <AsyncUserPicker
               value={selectedModeratorUserId}
               onValueChange={setSelectedModeratorUserId}
               label="Assigned moderator"
@@ -667,8 +664,7 @@ export function ModulePageClient({
           </div>
 
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
-            <UserMultiPicker
-              options={allUsers}
+            <AsyncUserMultiPicker
               value={selectedMarkingTeamUserIds}
               onValueChange={setSelectedMarkingTeamUserIds}
               label="Marking team"
@@ -699,8 +695,7 @@ export function ModulePageClient({
               <h3 className="text-sm font-semibold">Module leaders</h3>
             </div>
 
-            <UserPicker
-              options={allUsers}
+            <AsyncUserPicker
               value={selectedLeaderUserId}
               onValueChange={setSelectedLeaderUserId}
               placeholder="Search for a user to add as a module leader"
@@ -819,8 +814,7 @@ export function ModulePageClient({
                 </div>
 
                 <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
-                  <UserPicker
-                    options={allUsers}
+                  <AsyncUserPicker
                     value={selectedAssessmentUserId}
                     onValueChange={setSelectedAssessmentUserId}
                     label="Add existing user"

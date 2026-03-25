@@ -19,17 +19,7 @@ export default async function AdminPage() {
     notFound();
   }
 
-  const [users, modules, memberships] = await Promise.all([
-    prisma.user.findMany({
-      orderBy: [{ name: "asc" }, { email: "asc" }],
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        passwordHash: true,
-        emailVerified: true,
-      },
-    }),
+  const [modules, memberships] = await Promise.all([
     prisma.module.findMany({
       orderBy: { code: "asc" },
       include: {
@@ -73,15 +63,6 @@ export default async function AdminPage() {
         ]}
       />
       <AdminPageClient
-        userOptions={users.map((user) => ({
-          id: user.id,
-          name: getDisplayName(user),
-          email: user.email,
-          meta:
-            user.passwordHash && user.emailVerified
-              ? undefined
-              : "Invitation pending",
-        }))}
         modules={modules.map((module) => ({
           id: module.id,
           code: module.code,

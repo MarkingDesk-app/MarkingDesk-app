@@ -30,11 +30,12 @@ import {
   formatSubmissionType,
   isReviewFlagResolved,
 } from "@/lib/assessment-utils";
+import { AsyncUserMultiPicker } from "@/components/ui/async-user-multi-picker";
+import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FloatingToast } from "@/components/ui/floating-toast";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { UserMultiPicker } from "@/components/ui/user-multi-picker";
 import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
 type ScriptRow = {
@@ -78,8 +79,7 @@ type AssessmentWorkspaceClientProps = {
   canManageAssessment: boolean;
   canSubmitModeration: boolean;
   markerOptions: UserPickerOption[];
-  moderatorOptions: UserPickerOption[];
-  allUserOptions: UserPickerOption[];
+  currentModeratorOption: UserPickerOption | null;
   moduleLeaderOptions: UserPickerOption[];
   dueAtInput: string;
   markingDeadlineAtInput: string;
@@ -199,8 +199,7 @@ export function AssessmentWorkspaceClient({
   canManageAssessment,
   canSubmitModeration,
   markerOptions,
-  moderatorOptions,
-  allUserOptions,
+  currentModeratorOption,
   moduleLeaderOptions,
   dueAtInput,
   markingDeadlineAtInput,
@@ -281,7 +280,9 @@ export function AssessmentWorkspaceClient({
       const matchesSubmissionType = !submissionTypeFilter || script.submissionType === submissionTypeFilter;
       const matchesGrade =
         gradeFilter === "all" ||
-        (gradeFilter === "graded" ? script.grade !== null : script.grade === null);
+        (gradeFilter === "graded"
+          ? isScriptMarked(script, gradeInputs)
+          : !isScriptMarked(script, gradeInputs));
       const matchesFlag =
         flagFilter === "all" ||
         (flagFilter === "unflagged"
@@ -317,6 +318,7 @@ export function AssessmentWorkspaceClient({
   }, [
     flagFilter,
     gradeFilter,
+    gradeInputs,
     markerFilterUserId,
     myAllocatedScripts,
     scripts,
@@ -490,7 +492,6 @@ export function AssessmentWorkspaceClient({
         [scriptId]: formatGradeValue(result.data?.savedGrade ?? null),
       }));
       showToast("success", result.message ?? "Grade saved.");
-      router.refresh();
     });
   };
 
@@ -1054,20 +1055,25 @@ export function AssessmentWorkspaceClient({
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
               />
             </div>
-            <UserPicker
-              options={moderatorOptions}
+            <AsyncUserPicker
               value={settingsModeratorUserId}
               onValueChange={setSettingsModeratorUserId}
+              selectedOption={
+                currentModeratorOption?.id === settingsModeratorUserId
+                  ? currentModeratorOption
+                  : null
+              }
+              initialOptions={currentModeratorOption ? [currentModeratorOption] : []}
               label="Assigned moderator"
               placeholder="Search for a user"
             />
           </div>
 
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
-            <UserMultiPicker
-              options={allUserOptions}
+            <AsyncUserMultiPicker
               value={settingsMarkerUserIds}
               onValueChange={setSettingsMarkerUserIds}
+              selectedOptions={markerOptions}
               label="Marking team"
               placeholder="Search for a marker to add"
               addLabel="Add marker"

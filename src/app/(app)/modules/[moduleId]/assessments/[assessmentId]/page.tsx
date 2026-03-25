@@ -8,6 +8,7 @@ import { formatModerationStatus } from "@/lib/assessment-utils";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
+import type { UserPickerOption } from "@/components/ui/user-picker";
 
 type AssessmentPageProps = {
   params: Promise<{ moduleId: string; assessmentId: string }>;
@@ -156,18 +157,6 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
 
   const isModuleLeader = isAdmin || currentUserIsLeader;
   const canManageAssessment = !isArchived && (isAdmin || isModuleLeader);
-  const allUsers = canManageAssessment
-    ? await prisma.user.findMany({
-        orderBy: [{ name: "asc" }, { email: "asc" }],
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          passwordHash: true,
-          emailVerified: true,
-        },
-      })
-    : [];
   const canSubmitModeration = !isArchived && assessment.moderatorUserId === session.user.id;
   const workspaceVersion = assessment.scripts
     .map((script) => `${script.id}:${script.version}:${script.allocation?.markerUserId ?? ""}`)
@@ -183,17 +172,13 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         .filter(Boolean)
         .join(" · ") || undefined,
     }));
-  const moderatorOptions = allUsers
-    .map((membership) => ({
-      id: membership.id,
-      name: getDisplayName(membership),
-      email: membership.email,
-      meta: [
-        membership.passwordHash && membership.emailVerified ? null : "Invitation pending",
-      ]
-        .filter(Boolean)
-        .join(" · ") || undefined,
-    }));
+  const currentModeratorOption: UserPickerOption | null = assessment.moderatorUser
+    ? {
+        id: assessment.moderatorUser.id,
+        name: getDisplayName(assessment.moderatorUser),
+        email: assessment.moderatorUser.email,
+      }
+    : null;
 
   return (
     <>
@@ -222,13 +207,7 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         canManageAssessment={canManageAssessment}
         canSubmitModeration={canSubmitModeration}
         markerOptions={markerOptions}
-        moderatorOptions={moderatorOptions}
-        allUserOptions={allUsers.map((user) => ({
-          id: user.id,
-          name: getDisplayName(user),
-          email: user.email,
-          meta: user.passwordHash && user.emailVerified ? undefined : "Invitation pending",
-        }))}
+        currentModeratorOption={currentModeratorOption}
         moduleLeaderOptions={moduleMemberships.map((membership) => ({
           id: membership.user.id,
           name: getDisplayName(membership.user),

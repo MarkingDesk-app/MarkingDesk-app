@@ -6,10 +6,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { createModuleAction } from "./actions";
+import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
+import type { UserPickerOption } from "@/components/ui/user-picker";
 
 type ModuleSummary = {
   id: string;
@@ -33,7 +34,7 @@ type DashboardClientProps = {
   currentUserId: string;
   isAdmin: boolean;
   modules: ModuleSummary[];
-  allUsers: UserPickerOption[];
+  currentUserOption: UserPickerOption;
 };
 
 type Feedback = {
@@ -63,7 +64,7 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   );
 }
 
-export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: DashboardClientProps) {
+export function DashboardClient({ currentUserId, isAdmin, modules, currentUserOption }: DashboardClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
@@ -73,10 +74,11 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
   const [moduleSearchQuery, setModuleSearchQuery] = useState("");
   const [leaderPickerValue, setLeaderPickerValue] = useState(currentUserId);
   const [selectedLeaderIds, setSelectedLeaderIds] = useState<string[]>([currentUserId]);
+  const [knownLeaderOptions, setKnownLeaderOptions] = useState<UserPickerOption[]>([currentUserOption]);
   const deferredModuleSearchQuery = useDeferredValue(moduleSearchQuery);
 
   const selectedLeaders = selectedLeaderIds
-    .map((leaderId) => allUsers.find((user) => user.id === leaderId))
+    .map((leaderId) => knownLeaderOptions.find((user) => user.id === leaderId))
     .filter(Boolean) as UserPickerOption[];
 
   const selectedLeaderSet = useMemo(() => new Set(selectedLeaderIds), [selectedLeaderIds]);
@@ -99,6 +101,7 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
     setModuleTitle("");
     setLeaderPickerValue(currentUserId);
     setSelectedLeaderIds([currentUserId]);
+    setKnownLeaderOptions([currentUserOption]);
   };
 
   const addLeader = () => {
@@ -331,10 +334,24 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
           </div>
 
           <div className="space-y-3">
-            <UserPicker
-              options={allUsers}
+            <AsyncUserPicker
               value={leaderPickerValue}
               onValueChange={setLeaderPickerValue}
+              selectedOption={knownLeaderOptions.find((leader) => leader.id === leaderPickerValue) ?? null}
+              initialOptions={knownLeaderOptions}
+              onSelectionResolve={(option) => {
+                if (!option) {
+                  return;
+                }
+
+                setKnownLeaderOptions((current) => {
+                  if (current.some((leader) => leader.id === option.id)) {
+                    return current;
+                  }
+
+                  return [...current, option];
+                });
+              }}
               label="Module leaders"
               placeholder="Search for a user to add as a leader"
             />

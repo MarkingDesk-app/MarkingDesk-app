@@ -6,9 +6,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { inviteUserAction, saveMembershipAction, toggleMembershipAction } from "./actions";
+import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
 type ModuleOption = {
   id: string;
@@ -32,7 +32,6 @@ type MembershipSummary = {
 };
 
 type AdminPageClientProps = {
-  userOptions: UserPickerOption[];
   modules: ModuleOption[];
   memberships: MembershipSummary[];
 };
@@ -60,7 +59,7 @@ function FeedbackMessage({ feedback }: { feedback: Feedback }) {
   );
 }
 
-export function AdminPageClient({ userOptions, modules, memberships }: AdminPageClientProps) {
+export function AdminPageClient({ modules, memberships }: AdminPageClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
@@ -222,8 +221,7 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <UserPicker
-              options={userOptions}
+            <AsyncUserPicker
               value={selectedUserId}
               onValueChange={setSelectedUserId}
               label="User"
