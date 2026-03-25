@@ -1063,6 +1063,25 @@ export function AssessmentWorkspaceClient({
             Script ID: <span className="font-medium text-slate-900">{reviewDraft?.turnitinId ?? "—"}</span>
           </div>
 
+          <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-4 text-sm text-slate-600">
+            <p>
+              Once a script has been flagged, the flag stays on the script permanently as part of the audit trail, even
+              after the review has been resolved.
+            </p>
+            <div className="space-y-2">
+              <p className="font-medium text-slate-900">Flag colours</p>
+              <p>
+                <span className="font-medium text-amber-700">Amber</span>: flagged and still needs attention.
+              </p>
+              <p>
+                <span className="font-medium text-rose-700">Red</span>: academic conduct review.
+              </p>
+              <p>
+                <span className="font-medium text-emerald-700">Green</span>: no issue or review completed.
+              </p>
+            </div>
+          </div>
+
           <div className="grid gap-3 md:grid-cols-2">
             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <input
