@@ -229,8 +229,8 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
                     </div>
                   </div>
 
-                  <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_minmax(0,0.9fr)]">
-                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
+                  <div className="mt-3 grid items-stretch gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_minmax(0,0.9fr)]">
+                    <div className="min-w-0 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                         Overall Marking Progress
                       </p>
@@ -249,7 +249,7 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
                       <p className="mt-2 text-sm text-slate-500">{module.remainingScripts} remaining</p>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
+                    <div className="min-w-0 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                         Your Allocation Progress
                       </p>
@@ -276,15 +276,15 @@ export function DashboardClient({ currentUserId, isAdmin, modules, allUsers }: D
                       )}
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
+                    <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3.5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                         Next Deadline
                       </p>
                       <div className="mt-2 flex items-start gap-3 text-sm text-slate-600">
                         <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-                        <div className="space-y-1">
-                          <p>{module.nextDeadline}</p>
-                          <p>{module.assessments} assessments</p>
+                        <div className="min-w-0 space-y-1 text-sm leading-snug text-slate-600">
+                          <p className="break-words">{module.nextDeadline}</p>
+                          <p className="break-words">{module.assessments} assessments</p>
                         </div>
                       </div>
                     </div>

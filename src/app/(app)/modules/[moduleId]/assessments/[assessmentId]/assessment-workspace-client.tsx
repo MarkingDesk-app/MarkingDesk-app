@@ -392,6 +392,12 @@ export function AssessmentWorkspaceClient({
     setSettingsMarkerUserIds(currentMarkerUserIds);
   };
 
+  const openModerationModal = () => {
+    setModerationStatus(moderationStatusFromLabel(moderation.statusLabel));
+    setModerationReport(moderation.report ?? "");
+    setShowModerationModal(true);
+  };
+
   const handleViewModeChange = (nextViewMode: ViewMode) => {
     setViewMode(nextViewMode);
 
@@ -663,50 +669,19 @@ export function AssessmentWorkspaceClient({
               <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
                 Marking deadline {markingDeadlineAt}
               </span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
+                Moderator {moderation.moderatorName ?? "Not assigned"}
+              </span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
+                Moderation {moderation.statusLabel}
+              </span>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1">
-              <button
-                type="button"
-                onClick={() => handleViewModeChange("all")}
-                className={
-                  viewMode === "all"
-                    ? "rounded-xl bg-sky-600 px-3 py-2 text-sm font-medium text-white"
-                    : "rounded-xl px-3 py-2 text-sm font-medium text-slate-600"
-                }
-              >
-                View All
-              </button>
-              <button
-                type="button"
-                onClick={() => handleViewModeChange("my_allocation")}
-                disabled={myAllocatedScripts.length === 0}
-                className={
-                  viewMode === "my_allocation"
-                    ? "rounded-xl bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:bg-slate-200 disabled:text-slate-400"
-                    : "rounded-xl px-3 py-2 text-sm font-medium text-slate-600 disabled:text-slate-400"
-                }
-              >
-                View My Allocation
-              </button>
-            </div>
-            {visibleSelectedScriptIds.length > 0 ? (
-              <Button variant="secondary" onClick={() => openScriptsInTabs(visibleSelectedScriptIds)}>
-                Open selected ({visibleSelectedScriptIds.length})
-              </Button>
-            ) : null}
-            {scripts.length > 0 ? (
-              <Button variant="secondary" onClick={() => setShowOpenAllModal(true)}>
-                Open all
-              </Button>
-            ) : null}
-            {myAllocatedScripts.length > 0 ? (
-              <Button variant="secondary" onClick={() => setShowOpenMyAllocationModal(true)}>
-                Open my allocation
-              </Button>
-            ) : null}
+            <Button variant="secondary" onClick={openModerationModal}>
+              View moderation
+            </Button>
             {canManageAssessment ? (
               <>
                 <Button
@@ -793,43 +768,51 @@ export function AssessmentWorkspaceClient({
         </Card>
       </section>
 
-      <section className="grid gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle className="text-xl">Moderation</CardTitle>
-              <p className="mt-1 text-sm text-slate-600">
-                {moderation.moderatorName
-                  ? `Assigned to ${moderation.moderatorName}`
-                  : "No moderator assigned yet"}
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setModerationStatus(moderationStatusFromLabel(moderation.statusLabel));
-                setModerationReport(moderation.report ?? "");
-                setShowModerationModal(true);
-              }}
-              disabled={!canSubmitModeration}
-            >
-              Moderation report
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-slate-600">
-            <p>
-              Status: <span className="font-medium text-slate-900">{moderation.statusLabel}</span>
-            </p>
-            <p>Completed: {moderation.completedAt ?? "Not completed yet"}</p>
-            {isArchived ? <p className="text-slate-500">This moderation record is read-only because the assessment is archived.</p> : null}
-            {moderation.report ? <p className="line-clamp-3 text-slate-500">{moderation.report}</p> : null}
-          </CardContent>
-        </Card>
-      </section>
-
       <Card className="overflow-hidden">
-        <CardHeader className="border-b border-slate-200/80">
+        <CardHeader className="flex flex-col gap-4 border-b border-slate-200/80 lg:flex-row lg:items-start lg:justify-between">
           <CardTitle className="text-xl">Submissions</CardTitle>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("all")}
+                className={
+                  viewMode === "all"
+                    ? "rounded-xl bg-sky-600 px-3 py-2 text-sm font-medium text-white"
+                    : "rounded-xl px-3 py-2 text-sm font-medium text-slate-600"
+                }
+              >
+                View All
+              </button>
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("my_allocation")}
+                disabled={myAllocatedScripts.length === 0}
+                className={
+                  viewMode === "my_allocation"
+                    ? "rounded-xl bg-sky-600 px-3 py-2 text-sm font-medium text-white disabled:bg-slate-200 disabled:text-slate-400"
+                    : "rounded-xl px-3 py-2 text-sm font-medium text-slate-600 disabled:text-slate-400"
+                }
+              >
+                View My Allocation
+              </button>
+            </div>
+            {visibleSelectedScriptIds.length > 0 ? (
+              <Button variant="secondary" onClick={() => openScriptsInTabs(visibleSelectedScriptIds)}>
+                Open selected ({visibleSelectedScriptIds.length})
+              </Button>
+            ) : null}
+            {scripts.length > 0 ? (
+              <Button variant="secondary" onClick={() => setShowOpenAllModal(true)}>
+                Open all
+              </Button>
+            ) : null}
+            {myAllocatedScripts.length > 0 ? (
+              <Button variant="secondary" onClick={() => setShowOpenMyAllocationModal(true)}>
+                Open my allocation
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4 p-4">
           <div className="grid gap-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,0.8fr))]">
@@ -1558,16 +1541,36 @@ export function AssessmentWorkspaceClient({
       <ModalShell
         open={showModerationModal}
         onClose={() => setShowModerationModal(false)}
-        title="Moderation report"
-        description="Only the assigned moderator can submit or update this report."
+        title="View moderation"
+        description={
+          canSubmitModeration
+            ? "Review the moderation status and add or update the moderation report."
+            : "Only the assigned moderator can submit or update this report."
+        }
       >
         <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Moderator</p>
+              <p className="mt-2 font-medium text-slate-900">{moderation.moderatorName ?? "Not assigned"}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Status</p>
+              <p className="mt-2 font-medium text-slate-900">{moderation.statusLabel}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Completed</p>
+              <p className="mt-2 font-medium text-slate-900">{moderation.completedAt ?? "Not completed yet"}</p>
+            </div>
+          </div>
+
           <div className="grid gap-3 md:grid-cols-3">
             <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <input
                 type="radio"
                 checked={moderationStatus === ModerationStatus.NO_ISSUES}
                 onChange={() => setModerationStatus(ModerationStatus.NO_ISSUES)}
+                disabled={!canSubmitModeration}
               />
               <span className="text-sm font-medium text-slate-900">No issues</span>
             </label>
@@ -1576,6 +1579,7 @@ export function AssessmentWorkspaceClient({
                 type="radio"
                 checked={moderationStatus === ModerationStatus.MINOR_ADJUSTMENTS_REQUIRED}
                 onChange={() => setModerationStatus(ModerationStatus.MINOR_ADJUSTMENTS_REQUIRED)}
+                disabled={!canSubmitModeration}
               />
               <span className="text-sm font-medium text-slate-900">Minor adjustments</span>
             </label>
@@ -1584,6 +1588,7 @@ export function AssessmentWorkspaceClient({
                 type="radio"
                 checked={moderationStatus === ModerationStatus.MAJOR_ISSUES}
                 onChange={() => setModerationStatus(ModerationStatus.MAJOR_ISSUES)}
+                disabled={!canSubmitModeration}
               />
               <span className="text-sm font-medium text-slate-900">Major issues</span>
             </label>
@@ -1599,17 +1604,20 @@ export function AssessmentWorkspaceClient({
               onChange={(event) => setModerationReport(event.target.value)}
               rows={8}
               className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm outline-none ring-sky-500 focus:ring-2"
-              placeholder="Add the moderation summary here..."
+              placeholder={canSubmitModeration ? "Add the moderation summary here..." : "No moderation report has been added yet."}
+              readOnly={!canSubmitModeration}
             />
           </div>
 
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowModerationModal(false)}>
-              Cancel
+              Close
             </Button>
-            <Button onClick={handleModerationSubmit} disabled={!canSubmitModeration || !moderationReport.trim()}>
-              {moderation.hasCompletedModeration ? "Update report" : "Save report"}
-            </Button>
+            {canSubmitModeration ? (
+              <Button onClick={handleModerationSubmit} disabled={!moderationReport.trim()}>
+                {moderation.hasCompletedModeration ? "Update report" : "Save report"}
+              </Button>
+            ) : null}
           </div>
         </div>
       </ModalShell>
