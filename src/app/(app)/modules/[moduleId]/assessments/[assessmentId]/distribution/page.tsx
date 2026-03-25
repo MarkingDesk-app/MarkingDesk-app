@@ -1,0 +1,293 @@
+import { Role } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { notFound, redirect } from "next/navigation";
+
+import { AssessmentDistributionClient, type DistributionMarkerSlot, type DistributionSeries } from "./assessment-distribution-client";
+import { PageBreadcrumbs } from "@/components/breadcrumb-context";
+import { authOptions } from "@/lib/auth";
+import { computeBoxPlotStats } from "@/lib/grade-distribution";
+import { prisma } from "@/lib/prisma";
+import { getDisplayName } from "@/lib/user-display";
+
+type DistributionPageProps = {
+  params: Promise<{ moduleId: string; assessmentId: string }>;
+};
+
+function buildDistributionSeries(input: {
+  assessmentId: string;
+  academicYear: string;
+  markerId: string;
+  markerName: string;
+  grades: number[];
+  isCurrentYear: boolean;
+}): DistributionSeries | null {
+  const stats = computeBoxPlotStats(input.grades);
+
+  if (!stats) {
+    return null;
+  }
+
+  return {
+    key: `${input.assessmentId}:${input.markerId}`,
+    assessmentId: input.assessmentId,
+    academicYear: input.academicYear,
+    markerId: input.markerId,
+    markerName: input.markerName,
+    isCurrentYear: input.isCurrentYear,
+    ...stats,
+  };
+}
+
+export default async function AssessmentDistributionPage({ params }: DistributionPageProps) {
+  const session = await getServerSession(authOptions);
+
+  if (!session?.user?.id) {
+    redirect("/auth/sign-in");
+  }
+
+  const { moduleId, assessmentId } = await params;
+
+  const assessment = await prisma.assessmentInstance.findUnique({
+    where: { id: assessmentId },
+    include: {
+      markerAssignments: {
+        where: {
+          active: true,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      },
+      assessmentTemplate: {
+        include: {
+          module: true,
+        },
+      },
+      scripts: {
+        where: {
+          grade: {
+            not: null,
+          },
+          allocation: {
+            isNot: null,
+          },
+        },
+        select: {
+          grade: true,
+          allocation: {
+            select: {
+              markerUserId: true,
+              marker: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      moderatorUser: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  });
+
+  if (!assessment || assessment.assessmentTemplate.module.id !== moduleId) {
+    notFound();
+  }
+
+  const moduleMemberships = await prisma.moduleMembership.findMany({
+    where: {
+      moduleId,
+      active: true,
+      isLeader: true,
+    },
+    select: {
+      userId: true,
+    },
+  });
+
+  const isAdmin = session.user.role === Role.ADMIN;
+  const currentUserIsLeader = moduleMemberships.some((membership) => membership.userId === session.user.id);
+  const currentUserIsAssessmentMarker = assessment.markerAssignments.some(
+    (assignment) => assignment.userId === session.user.id
+  );
+  const currentUserIsModerator = assessment.moderatorUser?.id === session.user.id;
+  const isArchived = assessment.assessmentTemplate.isArchived;
+
+  if (!isAdmin && !currentUserIsLeader && !currentUserIsAssessmentMarker && !currentUserIsModerator) {
+    notFound();
+  }
+
+  if (isArchived && !isAdmin && !currentUserIsLeader) {
+    notFound();
+  }
+
+  const relatedInstances = await prisma.assessmentInstance.findMany({
+    where: {
+      assessmentTemplateId: assessment.assessmentTemplateId,
+    },
+    orderBy: [{ dueAt: "desc" }, { academicYear: "desc" }],
+    select: {
+      id: true,
+      academicYear: true,
+      dueAt: true,
+      scripts: {
+        where: {
+          grade: {
+            not: null,
+          },
+          allocation: {
+            isNot: null,
+          },
+        },
+        select: {
+          grade: true,
+          allocation: {
+            select: {
+              markerUserId: true,
+              marker: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const currentMarkerSlots = new Map<string, { markerId: string; markerName: string }>();
+
+  for (const assignment of assessment.markerAssignments) {
+    currentMarkerSlots.set(assignment.user.id, {
+      markerId: assignment.user.id,
+      markerName: getDisplayName(assignment.user),
+    });
+  }
+
+  for (const script of assessment.scripts) {
+    const marker = script.allocation?.marker;
+
+    if (!marker) {
+      continue;
+    }
+
+    currentMarkerSlots.set(marker.id, {
+      markerId: marker.id,
+      markerName: getDisplayName(marker),
+    });
+  }
+
+  const sortedMarkerSlots = Array.from(currentMarkerSlots.values()).sort((left, right) =>
+    left.markerName.localeCompare(right.markerName)
+  );
+  const currentInstanceDistributions = new Map<string, DistributionSeries>();
+
+  for (const marker of sortedMarkerSlots) {
+    const grades = assessment.scripts
+      .filter((script) => script.allocation?.markerUserId === marker.markerId)
+      .map((script) => script.grade)
+      .filter((grade): grade is number => grade !== null);
+    const series = buildDistributionSeries({
+      assessmentId: assessment.id,
+      academicYear: assessment.academicYear,
+      markerId: marker.markerId,
+      markerName: marker.markerName,
+      grades,
+      isCurrentYear: true,
+    });
+
+    if (series) {
+      currentInstanceDistributions.set(marker.markerId, series);
+    }
+  }
+
+  const previousInstances = relatedInstances
+    .filter((instance) => instance.id !== assessment.id && instance.dueAt < assessment.dueAt)
+    .sort((left, right) => right.dueAt.getTime() - left.dueAt.getTime());
+
+  const previousDistributionYears = new Map<string, number>();
+  const markerSlots: DistributionMarkerSlot[] = sortedMarkerSlots.map((marker) => {
+    const previousDistributions = previousInstances
+      .map((instance) => {
+        const grades = instance.scripts
+          .filter((script) => script.allocation?.markerUserId === marker.markerId)
+          .map((script) => script.grade)
+          .filter((grade): grade is number => grade !== null);
+
+        return buildDistributionSeries({
+          assessmentId: instance.id,
+          academicYear: instance.academicYear,
+          markerId: marker.markerId,
+          markerName: marker.markerName,
+          grades,
+          isCurrentYear: false,
+        });
+      })
+      .filter((distribution): distribution is DistributionSeries => distribution !== null);
+
+    for (const distribution of previousDistributions) {
+      previousDistributionYears.set(
+        distribution.academicYear,
+        (previousDistributionYears.get(distribution.academicYear) ?? 0) + 1
+      );
+    }
+
+    return {
+      markerId: marker.markerId,
+      markerName: marker.markerName,
+      currentDistribution: currentInstanceDistributions.get(marker.markerId) ?? null,
+      previousDistributions,
+    };
+  });
+
+  const previousYears = previousInstances
+    .map((instance) => ({
+      academicYear: instance.academicYear,
+      distributionCount: previousDistributionYears.get(instance.academicYear) ?? 0,
+    }))
+    .filter(
+      (year, index, years) =>
+        year.distributionCount > 0 &&
+        years.findIndex((candidate) => candidate.academicYear === year.academicYear) === index
+    );
+
+  return (
+    <>
+      <PageBreadcrumbs
+        items={[
+          { label: "Dashboard", href: "/dashboard" },
+          { label: assessment.assessmentTemplate.module.code, href: `/modules/${moduleId}` },
+          { label: assessment.assessmentTemplate.name, href: `/modules/${moduleId}/assessments/${assessmentId}` },
+          {
+            label: "Distribution",
+            href: `/modules/${moduleId}/assessments/${assessmentId}/distribution`,
+            current: true,
+          },
+        ]}
+      />
+      <AssessmentDistributionClient
+        moduleCode={assessment.assessmentTemplate.module.code}
+        assessmentName={assessment.assessmentTemplate.name}
+        academicYear={assessment.academicYear}
+        isArchived={isArchived}
+        slots={markerSlots}
+        previousYears={previousYears}
+      />
+    </>
+  );
+}

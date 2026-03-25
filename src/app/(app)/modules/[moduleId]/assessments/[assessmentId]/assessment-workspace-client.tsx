@@ -9,6 +9,7 @@ import {
   Upload,
   UsersRound,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ModerationStatus, ReviewFlagStatus, SubmissionType } from "@prisma/client";
 
@@ -679,6 +680,9 @@ export function AssessmentWorkspaceClient({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" asChild>
+              <Link href={`/modules/${moduleId}/assessments/${assessmentId}/distribution`}>View distribution</Link>
+            </Button>
             <Button variant="secondary" onClick={openModerationModal}>
               View moderation
             </Button>

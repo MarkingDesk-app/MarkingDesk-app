@@ -20,6 +20,99 @@ const demoUsers = [
   { email: "demo.moderator@markingdesk.test", name: "Demo Moderator", role: Role.USER },
 ] as const;
 
+const PREVIOUS_YEAR_DEMO_SCRIPTS = [
+  {
+    turnitinId: "223456781",
+    studentNumber: "DEMO24-S001",
+    name: "Alice Green",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456781",
+    submissionType: SubmissionType.FIRST_SUBMISSION,
+    markerEmail: "demo.leader@markingdesk.test",
+    grade: 72,
+    markerNotes: "Confident argument and well-structured analysis.",
+  },
+  {
+    turnitinId: "223456782",
+    studentNumber: "DEMO24-S002",
+    name: "Ben Carter",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456782",
+    submissionType: SubmissionType.FIRST_SUBMISSION,
+    markerEmail: "demo.leader@markingdesk.test",
+    grade: 69,
+    markerNotes: "Strong overall, though the discussion section could be tighter.",
+  },
+  {
+    turnitinId: "223456783",
+    studentNumber: "DEMO24-S003",
+    name: "Cara Wilson",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456783",
+    submissionType: SubmissionType.SEVEN_DAY_WINDOW,
+    markerEmail: "demo.leader@markingdesk.test",
+    grade: 74,
+    markerNotes: "Excellent engagement with the literature.",
+  },
+  {
+    turnitinId: "223456784",
+    studentNumber: "DEMO24-S004",
+    name: "Daniel Brooks",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456784",
+    submissionType: SubmissionType.FIRST_SUBMISSION,
+    markerEmail: "demo.marker@markingdesk.test",
+    grade: 58,
+    markerNotes: "Competent script with some weaker critical evaluation.",
+  },
+  {
+    turnitinId: "223456785",
+    studentNumber: "DEMO24-S005",
+    name: "Ella Young",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456785",
+    submissionType: SubmissionType.FIRST_SUBMISSION,
+    markerEmail: "demo.marker@markingdesk.test",
+    grade: 55,
+    markerNotes: "Satisfactory but lacked depth in the methodology discussion.",
+  },
+  {
+    turnitinId: "223456786",
+    studentNumber: "DEMO24-S006",
+    name: "Finn Roberts",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456786",
+    submissionType: SubmissionType.SEVEN_DAY_WINDOW,
+    markerEmail: "demo.marker@markingdesk.test",
+    grade: 61,
+    markerNotes: "Good recovery in the resubmission with clearer analysis.",
+  },
+  {
+    turnitinId: "223456787",
+    studentNumber: "DEMO24-S007",
+    name: "Grace Hall",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456787",
+    submissionType: SubmissionType.FIRST_SUBMISSION,
+    markerEmail: "demo.second-marker@markingdesk.test",
+    grade: 77,
+    markerNotes: "Careful and persuasive use of evidence throughout.",
+  },
+  {
+    turnitinId: "223456788",
+    studentNumber: "DEMO24-S008",
+    name: "Henry Adams",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456788",
+    submissionType: SubmissionType.FIRST_SUBMISSION,
+    markerEmail: "demo.second-marker@markingdesk.test",
+    grade: 80,
+    markerNotes: "Very strong critical insight and polished structure.",
+  },
+  {
+    turnitinId: "223456789",
+    studentNumber: "DEMO24-S009",
+    name: "Ivy Turner",
+    externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456789",
+    submissionType: SubmissionType.SEVEN_DAY_WINDOW,
+    markerEmail: "demo.second-marker@markingdesk.test",
+    grade: 83,
+    markerNotes: "Excellent performance with a particularly strong conclusion.",
+  },
+] as const;
+
 async function main() {
   const passwordHash = await hash(DEMO_PASSWORD, 10);
   const now = new Date();
@@ -282,6 +375,99 @@ async function main() {
         reason: "Similarity report requires formal review.",
         notifiedLeaderUserIds: leader?.id ? [leader.id] : [],
       },
+    });
+  }
+
+  const previousYearAssessment = await prisma.assessmentInstance.upsert({
+    where: {
+      assessmentTemplateId_academicYear: {
+        assessmentTemplateId: template.id,
+        academicYear: "2024/25",
+      },
+    },
+    update: {
+      dueAt: new Date("2025-04-07T12:00:00.000Z"),
+      markingDeadlineAt: new Date("2025-05-05T12:00:00.000Z"),
+      moderatorUserId: moderatorUser?.id ?? null,
+      moderationStatus: ModerationStatus.NO_ISSUES,
+      moderationReport: "Moderation completed with no issues identified across the marking team.",
+      moderationCompletedAt: new Date("2025-05-06T09:30:00.000Z"),
+    },
+    create: {
+      assessmentTemplateId: template.id,
+      academicYear: "2024/25",
+      dueAt: new Date("2025-04-07T12:00:00.000Z"),
+      markingDeadlineAt: new Date("2025-05-05T12:00:00.000Z"),
+      moderatorUserId: moderatorUser?.id ?? null,
+      moderationStatus: ModerationStatus.NO_ISSUES,
+      moderationReport: "Moderation completed with no issues identified across the marking team.",
+      moderationCompletedAt: new Date("2025-05-06T09:30:00.000Z"),
+    },
+  });
+
+  await Promise.all(
+    allocationTargets.map((userId) =>
+      prisma.assessmentMarker.upsert({
+        where: {
+          assessmentInstanceId_userId: {
+            assessmentInstanceId: previousYearAssessment.id,
+            userId,
+          },
+        },
+        update: { active: true },
+        create: {
+          assessmentInstanceId: previousYearAssessment.id,
+          userId,
+          active: true,
+        },
+      })
+    )
+  );
+
+  for (const row of PREVIOUS_YEAR_DEMO_SCRIPTS) {
+    const student = await prisma.student.upsert({
+      where: { studentNumber: row.studentNumber },
+      update: { name: row.name },
+      create: { studentNumber: row.studentNumber, name: row.name },
+    });
+
+    const script = await prisma.script.upsert({
+      where: {
+        assessmentInstanceId_turnitinId: {
+          assessmentInstanceId: previousYearAssessment.id,
+          turnitinId: row.turnitinId,
+        },
+      },
+      update: {
+        studentId: student.id,
+        submissionType: row.submissionType,
+        externalUrl: row.externalUrl,
+        status: ScriptStatus.COMPLETED,
+        grade: row.grade,
+        markerNotes: row.markerNotes,
+      },
+      create: {
+        assessmentInstanceId: previousYearAssessment.id,
+        studentId: student.id,
+        turnitinId: row.turnitinId,
+        submissionType: row.submissionType,
+        externalUrl: row.externalUrl,
+        status: ScriptStatus.COMPLETED,
+        grade: row.grade,
+        markerNotes: row.markerNotes,
+      },
+    });
+
+    const markerUserId = byEmail.get(row.markerEmail)?.id;
+
+    if (!markerUserId) {
+      continue;
+    }
+
+    await prisma.allocation.upsert({
+      where: { scriptId: script.id },
+      update: { markerUserId },
+      create: { scriptId: script.id, markerUserId },
     });
   }
 
