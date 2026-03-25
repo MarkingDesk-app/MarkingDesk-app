@@ -1,0 +1,725 @@
+"use client";
+
+import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  LoaderCircle,
+  ShieldAlert,
+  Upload,
+  UsersRound,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ModerationStatus, SubmissionType } from "@prisma/client";
+
+import {
+  autoAssignUnallocatedScriptsAction,
+  importAssessmentSubmissionsAction,
+  saveAssessmentModerationAction,
+  saveScriptAllocationAction,
+  saveScriptGradeAction,
+} from "./actions";
+import {
+  buildTurnitinSubmissionUrl,
+  extractTurnitinIds,
+  findDuplicateIds,
+  formatSubmissionType,
+} from "@/lib/assessment-utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FloatingToast } from "@/components/ui/floating-toast";
+import { ModalShell } from "@/components/ui/modal-shell";
+
+type MarkerOption = {
+  id: string;
+  displayName: string;
+};
+
+type ScriptRow = {
+  id: string;
+  turnitinId: string;
+  submissionType: SubmissionType;
+  grade: number | null;
+  status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" | "UNDER_REVIEW";
+  markerUserId: string | null;
+  markerName: string | null;
+  canMark: boolean;
+  hasIntegrityFlag: boolean;
+  hasReviewFlag: boolean;
+};
+
+type ModerationSummary = {
+  moderatorName: string | null;
+  moderatorEmail: string | null;
+  statusLabel: string;
+  completedAt: string | null;
+  report: string | null;
+  hasCompletedModeration: boolean;
+};
+
+type AssessmentWorkspaceClientProps = {
+  moduleId: string;
+  assessmentId: string;
+  moduleCode: string;
+  assessmentName: string;
+  academicYear: string;
+  dueAt: string;
+  markingDeadlineAt: string;
+  canManageAssessment: boolean;
+  canSubmitModeration: boolean;
+  markerOptions: MarkerOption[];
+  scripts: ScriptRow[];
+  moderation: ModerationSummary;
+};
+
+type ToastState = {
+  tone: "success" | "error";
+  message: string;
+} | null;
+
+function formatGradeValue(grade: number | null): string {
+  if (grade === null) {
+    return "";
+  }
+
+  return Number.isInteger(grade) ? String(grade) : String(grade);
+}
+
+function areEqualGradeValues(left: string, right: string): boolean {
+  return left.trim() === right.trim();
+}
+
+function moderationStatusFromLabel(statusLabel: string): ModerationStatus {
+  if (statusLabel === "Minor adjustments required") {
+    return ModerationStatus.MINOR_ADJUSTMENTS_REQUIRED;
+  }
+
+  if (statusLabel === "Major issues") {
+    return ModerationStatus.MAJOR_ISSUES;
+  }
+
+  return ModerationStatus.NO_ISSUES;
+}
+
+export function AssessmentWorkspaceClient({
+  moduleId,
+  assessmentId,
+  moduleCode,
+  assessmentName,
+  academicYear,
+  dueAt,
+  markingDeadlineAt,
+  canManageAssessment,
+  canSubmitModeration,
+  markerOptions,
+  scripts: initialScripts,
+  moderation: initialModeration,
+}: AssessmentWorkspaceClientProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const scripts = initialScripts;
+  const moderation = initialModeration;
+  const [selectedScriptIds, setSelectedScriptIds] = useState<string[]>([]);
+  const [gradeInputs, setGradeInputs] = useState<Record<string, string>>(
+    Object.fromEntries(initialScripts.map((script) => [script.id, formatGradeValue(script.grade)]))
+  );
+  const [toast, setToast] = useState<ToastState>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showOpenAllModal, setShowOpenAllModal] = useState(false);
+  const [showModerationModal, setShowModerationModal] = useState(false);
+  const [importSubmissionType, setImportSubmissionType] = useState<SubmissionType>(SubmissionType.FIRST_SUBMISSION);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+  const [moderationStatus, setModerationStatus] = useState<ModerationStatus>(
+    moderationStatusFromLabel(initialModeration.statusLabel)
+  );
+  const [moderationReport, setModerationReport] = useState(initialModeration.report ?? "");
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setToast(null);
+    }, 2200);
+
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  const activeSelectedScriptIds = selectedScriptIds.filter((id) => scripts.some((script) => script.id === id));
+  const totalScriptCount = scripts.length;
+  const markedScriptCount = scripts.filter((script) => {
+    const pendingGradeValue = gradeInputs[script.id];
+    const effectiveValue = pendingGradeValue ?? formatGradeValue(script.grade);
+    return effectiveValue.trim() !== "";
+  }).length;
+  const allSelected = scripts.length > 0 && activeSelectedScriptIds.length === scripts.length;
+  const remainingScripts = totalScriptCount - markedScriptCount;
+  const progressPercentage = totalScriptCount === 0 ? 0 : Math.round((markedScriptCount / totalScriptCount) * 100);
+
+  const extractedIds = useMemo(() => extractTurnitinIds(importText), [importText]);
+  const duplicateIdsInPaste = useMemo(() => findDuplicateIds(extractedIds), [extractedIds]);
+  const existingTurnitinIdSet = useMemo(() => new Set(scripts.map((script) => script.turnitinId)), [scripts]);
+  const existingDuplicateIds = useMemo(
+    () =>
+      Array.from(new Set(extractedIds.filter((turnitinId) => existingTurnitinIdSet.has(turnitinId)))).sort((left, right) =>
+        left.localeCompare(right)
+      ),
+    [existingTurnitinIdSet, extractedIds]
+  );
+  const canImport =
+    extractedIds.length > 0 && duplicateIdsInPaste.length === 0 && existingDuplicateIds.length === 0 && !isPending;
+
+  const showToast = (tone: "success" | "error", message: string) => {
+    setToast({ tone, message });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedScriptIds(allSelected ? [] : scripts.map((script) => script.id));
+  };
+
+  const toggleScriptSelection = (scriptId: string) => {
+    setSelectedScriptIds((current) =>
+      current.includes(scriptId) ? current.filter((id) => id !== scriptId) : [...current, scriptId]
+    );
+  };
+
+  const openScriptsInTabs = (scriptIds: string[]) => {
+    const selectedScripts = scripts.filter((script) => scriptIds.includes(script.id));
+
+    for (const script of selectedScripts) {
+      window.open(buildTurnitinSubmissionUrl(script.turnitinId), "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleGradeBlur = (scriptId: string) => {
+    const script = scripts.find((currentScript) => currentScript.id === scriptId);
+
+    if (!script) {
+      return;
+    }
+
+    const nextValue = (gradeInputs[scriptId] ?? "").trim();
+    const previousValue = formatGradeValue(script.grade);
+
+    if (areEqualGradeValues(nextValue, previousValue)) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await saveScriptGradeAction({
+        moduleId,
+        assessmentId,
+        scriptId,
+        grade: nextValue,
+      });
+
+      if (!result.ok) {
+        setGradeInputs((current) => ({
+          ...current,
+          [scriptId]: previousValue,
+        }));
+        showToast("error", result.error);
+        return;
+      }
+
+      setGradeInputs((current) => ({
+        ...current,
+        [scriptId]: formatGradeValue(result.data?.savedGrade ?? null),
+      }));
+      showToast("success", result.message ?? "Grade saved.");
+      router.refresh();
+    });
+  };
+
+  const handleAllocationChange = (scriptId: string, markerUserId: string) => {
+    startTransition(async () => {
+      const result = await saveScriptAllocationAction({
+        moduleId,
+        assessmentId,
+        scriptId,
+        markerUserId: markerUserId || null,
+      });
+
+      if (!result.ok) {
+        showToast("error", result.error);
+        return;
+      }
+
+      showToast("success", result.message ?? "Allocation saved.");
+      router.refresh();
+    });
+  };
+
+  const handleImportSubmit = () => {
+    if (!canImport) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await importAssessmentSubmissionsAction({
+        moduleId,
+        assessmentId,
+        submissionType: importSubmissionType,
+        rawText: importText,
+      });
+
+      if (!result.ok) {
+        setImportError(result.error);
+        if (result.data?.duplicateIds?.length || result.data?.existingIds?.length) {
+          setImportError("Remove duplicate IDs before importing submissions.");
+        }
+        showToast("error", result.error);
+        return;
+      }
+
+      setImportText("");
+      setImportError(null);
+      setShowImportModal(false);
+      showToast("success", result.message ?? "Submissions imported.");
+      router.refresh();
+    });
+  };
+
+  const handleAutoAssign = () => {
+    startTransition(async () => {
+      const result = await autoAssignUnallocatedScriptsAction({
+        moduleId,
+        assessmentId,
+      });
+
+      if (!result.ok) {
+        showToast("error", result.error);
+        return;
+      }
+
+      showToast("success", result.message ?? "Submissions assigned.");
+      router.refresh();
+    });
+  };
+
+  const handleModerationSubmit = () => {
+    startTransition(async () => {
+      const result = await saveAssessmentModerationAction({
+        moduleId,
+        assessmentId,
+        status: moderationStatus,
+        report: moderationReport,
+      });
+
+      if (!result.ok) {
+        showToast("error", result.error);
+        return;
+      }
+
+      setShowModerationModal(false);
+      showToast("success", result.message ?? "Moderation report saved.");
+      router.refresh();
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">{moduleCode}</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+              {assessmentName} <span className="text-slate-400">/</span> {academicYear}
+            </h1>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
+                {totalScriptCount} submissions
+              </span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">{remainingScripts} remaining</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">Due {dueAt}</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
+                Marking deadline {markingDeadlineAt}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {activeSelectedScriptIds.length > 0 ? (
+              <Button variant="secondary" onClick={() => openScriptsInTabs(activeSelectedScriptIds)}>
+                Open selected ({activeSelectedScriptIds.length})
+              </Button>
+            ) : null}
+            {scripts.length > 0 ? (
+              <Button variant="secondary" onClick={() => setShowOpenAllModal(true)}>
+                Open all
+              </Button>
+            ) : null}
+            {canManageAssessment ? (
+              <>
+                <Button variant="secondary" onClick={handleAutoAssign} disabled={isPending}>
+                  {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UsersRound className="h-4 w-4" />}
+                  Auto-assign
+                </Button>
+                <Button onClick={() => setShowImportModal(true)}>
+                  <Upload className="h-4 w-4" />
+                  Import Submissions
+                </Button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl">Marking Progress</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-3xl font-semibold tracking-tight text-slate-950">
+                {markedScriptCount}/{totalScriptCount}
+              </p>
+              <p className="text-sm text-slate-500">completed</p>
+            </div>
+            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-sky-600 transition-[width]"
+                style={{ width: `${progressPercentage}%` }}
+              />
+            </div>
+            <p className="text-sm text-slate-600">{remainingScripts} submissions still need grades.</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle className="text-xl">Moderation</CardTitle>
+              <p className="mt-1 text-sm text-slate-600">
+                {moderation.moderatorName
+                  ? `Assigned to ${moderation.moderatorName}`
+                  : "No moderator assigned yet"}
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setModerationStatus(moderationStatusFromLabel(moderation.statusLabel));
+                setModerationReport(moderation.report ?? "");
+                setShowModerationModal(true);
+              }}
+              disabled={!canSubmitModeration}
+            >
+              Moderation report
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-slate-600">
+            <p>
+              Status: <span className="font-medium text-slate-900">{moderation.statusLabel}</span>
+            </p>
+            <p>Completed: {moderation.completedAt ?? "Not completed yet"}</p>
+            {moderation.report ? <p className="line-clamp-3 text-slate-500">{moderation.report}</p> : null}
+          </CardContent>
+        </Card>
+      </section>
+
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b border-slate-200/80">
+          <CardTitle className="text-xl">Submissions</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {scripts.length === 0 ? (
+            <div className="px-6 py-12 text-center text-sm text-slate-500">
+              No submissions yet. Use <span className="font-medium text-slate-700">Import Submissions</span> to add the
+              Turnitin IDs for this assessment.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-0">
+                <thead>
+                  <tr className="bg-slate-50/80 text-left text-xs uppercase tracking-[0.2em] text-slate-500">
+                    <th className="px-4 py-3">
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+                    </th>
+                    <th className="px-4 py-3">Script ID</th>
+                    <th className="px-4 py-3">Marker</th>
+                    <th className="px-4 py-3">Submission Type</th>
+                    <th className="px-4 py-3">Grade</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scripts.map((script) => (
+                    <tr key={script.id} className="border-t border-slate-200/80 text-sm text-slate-700">
+                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                        <input
+                          type="checkbox"
+                          checked={activeSelectedScriptIds.includes(script.id)}
+                          onChange={() => toggleScriptSelection(script.id)}
+                        />
+                      </td>
+                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle font-medium text-slate-950">
+                        {script.turnitinId}
+                      </td>
+                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                        {canManageAssessment ? (
+                          <select
+                            value={script.markerUserId ?? ""}
+                            onChange={(event) => handleAllocationChange(script.id, event.target.value)}
+                            className="min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-sky-500 focus:ring-2"
+                          >
+                            <option value="">Unassigned</option>
+                            {markerOptions.map((marker) => (
+                              <option key={marker.id} value={marker.id}>
+                                {marker.displayName}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-slate-600">{script.markerName ?? "Unassigned"}</span>
+                        )}
+                      </td>
+                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                        {formatSubmissionType(script.submissionType)}
+                      </td>
+                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                        {script.canMark ? (
+                          <input
+                            value={gradeInputs[script.id] ?? ""}
+                            onChange={(event) =>
+                              setGradeInputs((current) => ({
+                                ...current,
+                                [script.id]: event.target.value,
+                              }))
+                            }
+                            onBlur={() => handleGradeBlur(script.id)}
+                            inputMode="decimal"
+                            className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-sky-500 focus:ring-2"
+                            placeholder="Grade"
+                          />
+                        ) : (
+                          <span className="text-slate-500">{formatGradeValue(script.grade) || "—"}</span>
+                        )}
+                      </td>
+                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                        <div className="flex items-center gap-3">
+                          {script.hasReviewFlag ? (
+                            <span title="Flagged for review" className="text-amber-600">
+                              <AlertTriangle className="h-4 w-4" />
+                            </span>
+                          ) : null}
+                          {script.hasIntegrityFlag ? (
+                            <span title="Integrity flag present" className="text-rose-600">
+                              <ShieldAlert className="h-4 w-4" />
+                            </span>
+                          ) : null}
+                          {!script.hasReviewFlag && !script.hasIntegrityFlag ? (
+                            <span className="text-slate-300">—</span>
+                          ) : null}
+                          <a
+                            href={buildTurnitinSubmissionUrl(script.turnitinId)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-sky-200 hover:text-sky-700"
+                            title="Open script"
+                          >
+                            <ArrowUpRight className="h-4 w-4" />
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <ModalShell
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        title="Import submissions"
+        description="Paste the Turnitin page text and choose which submission window this batch belongs to."
+      >
+        <div className="space-y-5">
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-slate-700">Submission window</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="radio"
+                  name="submissionType"
+                  checked={importSubmissionType === SubmissionType.FIRST_SUBMISSION}
+                  onChange={() => setImportSubmissionType(SubmissionType.FIRST_SUBMISSION)}
+                />
+                <span className="text-sm font-medium text-slate-900">1st Submission</span>
+              </label>
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="radio"
+                  name="submissionType"
+                  checked={importSubmissionType === SubmissionType.SEVEN_DAY_WINDOW}
+                  onChange={() => setImportSubmissionType(SubmissionType.SEVEN_DAY_WINDOW)}
+                />
+                <span className="text-sm font-medium text-slate-900">7-day window</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="turnitin-text" className="text-sm font-medium text-slate-700">
+              Turnitin page text
+            </label>
+            <textarea
+              id="turnitin-text"
+              value={importText}
+              onChange={(event) => {
+                setImportText(event.target.value);
+                setImportError(null);
+              }}
+              rows={10}
+              className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm outline-none ring-sky-500 focus:ring-2"
+              placeholder="Paste the copied Turnitin list here..."
+            />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Extracted</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-950">{extractedIds.length}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Duplicates in paste</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-950">{duplicateIdsInPaste.length}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Already in assessment</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-950">{existingDuplicateIds.length}</p>
+            </div>
+          </div>
+
+          {duplicateIdsInPaste.length > 0 ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              Duplicate IDs in pasted text: {duplicateIdsInPaste.join(", ")}
+            </div>
+          ) : null}
+
+          {existingDuplicateIds.length > 0 ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              These IDs already exist in this assessment: {existingDuplicateIds.join(", ")}
+            </div>
+          ) : null}
+
+          {importError ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {importError}
+            </div>
+          ) : null}
+
+          {extractedIds.length > 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Preview: {extractedIds.slice(0, 12).join(", ")}
+              {extractedIds.length > 12 ? "..." : ""}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowImportModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleImportSubmit} disabled={!canImport}>
+              Import submissions
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={showOpenAllModal}
+        onClose={() => setShowOpenAllModal(false)}
+        title="Open all submissions"
+        description={`This will open ${scripts.length} browser tab${scripts.length === 1 ? "" : "s"}.`}
+        widthClassName="max-w-lg"
+      >
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            This action is about to open {scripts.length} tabs. Are you sure you wish to continue?
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowOpenAllModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                openScriptsInTabs(scripts.map((script) => script.id));
+                setShowOpenAllModal(false);
+              }}
+            >
+              Open all
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={showModerationModal}
+        onClose={() => setShowModerationModal(false)}
+        title="Moderation report"
+        description="Only the assigned moderator can submit or update this report."
+      >
+        <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={moderationStatus === ModerationStatus.NO_ISSUES}
+                onChange={() => setModerationStatus(ModerationStatus.NO_ISSUES)}
+              />
+              <span className="text-sm font-medium text-slate-900">No issues</span>
+            </label>
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={moderationStatus === ModerationStatus.MINOR_ADJUSTMENTS_REQUIRED}
+                onChange={() => setModerationStatus(ModerationStatus.MINOR_ADJUSTMENTS_REQUIRED)}
+              />
+              <span className="text-sm font-medium text-slate-900">Minor adjustments</span>
+            </label>
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={moderationStatus === ModerationStatus.MAJOR_ISSUES}
+                onChange={() => setModerationStatus(ModerationStatus.MAJOR_ISSUES)}
+              />
+              <span className="text-sm font-medium text-slate-900">Major issues</span>
+            </label>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="moderation-report" className="text-sm font-medium text-slate-700">
+              Report
+            </label>
+            <textarea
+              id="moderation-report"
+              value={moderationReport}
+              onChange={(event) => setModerationReport(event.target.value)}
+              rows={8}
+              className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm outline-none ring-sky-500 focus:ring-2"
+              placeholder="Add the moderation summary here..."
+            />
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowModerationModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleModerationSubmit} disabled={!canSubmitModeration || !moderationReport.trim()}>
+              {moderation.hasCompletedModeration ? "Update report" : "Save report"}
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+
+      {toast ? <FloatingToast message={toast.message} tone={toast.tone} /> : null}
+    </div>
+  );
+}

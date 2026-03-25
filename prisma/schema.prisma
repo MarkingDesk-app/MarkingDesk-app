@@ -1,0 +1,241 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MARKER
+  MODULE_LEADER
+  MODERATOR
+  ADMIN
+}
+
+enum ModuleRole {
+  MARKER
+  MODULE_LEADER
+  MODERATOR
+}
+
+enum ScriptStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  UNDER_REVIEW
+}
+
+enum SubmissionType {
+  FIRST_SUBMISSION
+  SEVEN_DAY_WINDOW
+}
+
+enum ModerationStatus {
+  NO_ISSUES
+  MINOR_ADJUSTMENTS_REQUIRED
+  MAJOR_ISSUES
+}
+
+enum ModerationOutcome {
+  OK
+  TOO_HIGH
+  TOO_LOW
+  INCONSISTENT
+}
+
+enum IntegrityStatus {
+  UNDER_INVESTIGATION
+  SUSPECTED_PLAGIARISM
+  REQUIRES_REVIEW
+}
+
+enum IntegrityOutcome {
+  CAPPED_AT_40
+  FAILED_RESIT
+  NO_VIOLATION
+  OTHER
+}
+
+enum IntegrityVisibility {
+  NORMAL
+  RESTRICTED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model User {
+  id                String               @id @default(cuid())
+  name              String
+  email             String               @unique
+  passwordHash      String?
+  emailVerified     DateTime?
+  role              Role                 @default(MARKER)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  moduleMemberships ModuleMembership[]
+  moderatedAssessments AssessmentInstance[] @relation("AssessmentModerator")
+  allocations       Allocation[]         @relation("AllocationMarker")
+  moderationChecks  ModerationCheck[]    @relation("ModerationReviewer")
+  auditLogs         AuditLog[]           @relation("AuditActor")
+  emailVerifications EmailVerification[]
+  passwordResets    PasswordResetToken[]
+}
+
+model Module {
+  id                String               @id @default(cuid())
+  code              String               @unique
+  title             String
+  createdAt         DateTime             @default(now())
+  memberships       ModuleMembership[]
+  assessmentTemplates AssessmentTemplate[]
+}
+
+model ModuleMembership {
+  id       String  @id @default(cuid())
+  userId   String
+  moduleId String
+  role     ModuleRole
+  active   Boolean @default(true)
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module   Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, moduleId, role])
+  @@index([moduleId, role])
+}
+
+model AssessmentTemplate {
+  id                  String               @id @default(cuid())
+  moduleId            String
+  name                String
+  createdAt           DateTime             @default(now())
+  module              Module               @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  assessmentInstances AssessmentInstance[]
+
+  @@unique([moduleId, name])
+  @@index([moduleId])
+}
+
+model AssessmentInstance {
+  id                   String              @id @default(cuid())
+  assessmentTemplateId String
+  academicYear         String
+  opensAt              DateTime?
+  dueAt                DateTime
+  markingDeadlineAt    DateTime
+  moderatorUserId      String?
+  moderationStatus     ModerationStatus?
+  moderationReport     String?
+  moderationCompletedAt DateTime?
+  assessmentTemplate   AssessmentTemplate  @relation(fields: [assessmentTemplateId], references: [id], onDelete: Cascade)
+  moderatorUser        User?               @relation("AssessmentModerator", fields: [moderatorUserId], references: [id], onDelete: SetNull)
+  scripts              Script[]
+
+  @@unique([assessmentTemplateId, academicYear])
+  @@index([academicYear])
+}
+
+model Student {
+  id            String   @id @default(cuid())
+  studentNumber String   @unique
+  name          String?
+  scripts       Script[]
+}
+
+model Script {
+  id                   String             @id @default(cuid())
+  assessmentInstanceId String
+  studentId            String?
+  turnitinId           String
+  submissionType       SubmissionType     @default(FIRST_SUBMISSION)
+  externalUrl          String
+  status               ScriptStatus       @default(NOT_STARTED)
+  grade                Float?
+  markerNotes          String?
+  version              Int                @default(1)
+  lastEditedAt         DateTime           @default(now()) @updatedAt
+  assessmentInstance   AssessmentInstance @relation(fields: [assessmentInstanceId], references: [id], onDelete: Cascade)
+  student              Student?           @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  allocation           Allocation?
+  moderationChecks     ModerationCheck[]
+  integrityFlag        IntegrityFlag?
+
+  @@unique([assessmentInstanceId, turnitinId])
+  @@index([turnitinId])
+  @@index([status])
+}
+
+model Allocation {
+  id           String   @id @default(cuid())
+  scriptId     String   @unique
+  markerUserId String
+  allocatedAt  DateTime @default(now())
+  script       Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  marker       User     @relation("AllocationMarker", fields: [markerUserId], references: [id], onDelete: Cascade)
+
+  @@index([markerUserId])
+}
+
+model ModerationCheck {
+  id              String            @id @default(cuid())
+  scriptId        String
+  moderatorUserId String
+  outcome         ModerationOutcome
+  notes           String?
+  checkedAt       DateTime          @default(now())
+  script          Script            @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  moderator       User              @relation("ModerationReviewer", fields: [moderatorUserId], references: [id], onDelete: Cascade)
+
+  @@index([scriptId, checkedAt])
+}
+
+model IntegrityFlag {
+  id         String             @id @default(cuid())
+  scriptId   String             @unique
+  status     IntegrityStatus
+  outcome    IntegrityOutcome?
+  notes      String?
+  visibility IntegrityVisibility @default(NORMAL)
+  script     Script             @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String     @id @default(cuid())
+  actorUserId String
+  entityType  String
+  entityId    String
+  action      AuditAction
+  diffJson    Json
+  createdAt   DateTime   @default(now())
+  actor       User       @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+}
+
+model EmailVerification {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
