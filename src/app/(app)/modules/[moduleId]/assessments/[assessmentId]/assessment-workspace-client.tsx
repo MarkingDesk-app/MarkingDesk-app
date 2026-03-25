@@ -4,18 +4,19 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
+  Flag,
   LoaderCircle,
-  ShieldAlert,
   Upload,
   UsersRound,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ModerationStatus, SubmissionType } from "@prisma/client";
+import { ModerationStatus, ReviewFlagStatus, SubmissionType } from "@prisma/client";
 
 import {
   autoAssignUnallocatedScriptsAction,
   importAssessmentSubmissionsAction,
   saveAssessmentModerationAction,
+  saveReviewFlagAction,
   saveScriptAllocationAction,
   saveScriptGradeAction,
   updateAssessmentSettingsAction,
@@ -24,12 +25,15 @@ import {
   buildTurnitinSubmissionUrl,
   extractTurnitinIds,
   findDuplicateIds,
+  formatReviewFlagStatus,
   formatSubmissionType,
+  isReviewFlagResolved,
 } from "@/lib/assessment-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FloatingToast } from "@/components/ui/floating-toast";
 import { ModalShell } from "@/components/ui/modal-shell";
+import { UserMultiPicker } from "@/components/ui/user-multi-picker";
 import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
 type ScriptRow = {
@@ -42,8 +46,13 @@ type ScriptRow = {
   markerName: string | null;
   canMark: boolean;
   assignedToCurrentUser: boolean;
-  hasIntegrityFlag: boolean;
-  hasReviewFlag: boolean;
+  reviewFlag: {
+    id: string;
+    status: ReviewFlagStatus;
+    reason: string;
+    outcomeNotes: string | null;
+    notifiedLeaderUserIds: string[];
+  } | null;
 };
 
 type ModerationSummary = {
@@ -67,10 +76,12 @@ type AssessmentWorkspaceClientProps = {
   canSubmitModeration: boolean;
   markerOptions: UserPickerOption[];
   moderatorOptions: UserPickerOption[];
-  opensAtInput: string;
+  allUserOptions: UserPickerOption[];
+  moduleLeaderOptions: UserPickerOption[];
   dueAtInput: string;
   markingDeadlineAtInput: string;
   currentModeratorUserId: string;
+  currentMarkerUserIds: string[];
   scripts: ScriptRow[];
   moderation: ModerationSummary;
 };
@@ -86,6 +97,15 @@ type AllocationDraft = {
   scriptId: string;
   turnitinId: string;
 } | null;
+
+type ReviewDraft = {
+  scriptId: string;
+  turnitinId: string;
+} | null;
+
+type GradeFilter = "all" | "graded" | "ungraded";
+type FlagFilter = "all" | "needs_attention" | "resolved" | "unflagged";
+type SortOption = "script_asc" | "script_desc" | "marker_asc" | "submission_type" | "flag_status";
 
 function formatGradeValue(grade: number | null): string {
   if (grade === null) {
@@ -124,6 +144,26 @@ function moderationStatusFromLabel(statusLabel: string): ModerationStatus {
   return ModerationStatus.NO_ISSUES;
 }
 
+function compareNullableText(left: string | null, right: string | null): number {
+  return (left ?? "").localeCompare(right ?? "");
+}
+
+function getReviewFlagClasses(status: ReviewFlagStatus | null | undefined): string {
+  if (!status) {
+    return "border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600";
+  }
+
+  if (status === ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW) {
+    return "border-rose-200 text-rose-600 hover:border-rose-300 hover:text-rose-700";
+  }
+
+  if (isReviewFlagResolved(status)) {
+    return "border-emerald-200 text-emerald-600 hover:border-emerald-300 hover:text-emerald-700";
+  }
+
+  return "border-amber-200 text-amber-600 hover:border-amber-300 hover:text-amber-700";
+}
+
 export function AssessmentWorkspaceClient({
   moduleId,
   assessmentId,
@@ -136,10 +176,12 @@ export function AssessmentWorkspaceClient({
   canSubmitModeration,
   markerOptions,
   moderatorOptions,
-  opensAtInput,
+  allUserOptions,
+  moduleLeaderOptions,
   dueAtInput,
   markingDeadlineAtInput,
   currentModeratorUserId,
+  currentMarkerUserIds,
   scripts: initialScripts,
   moderation: initialModeration,
 }: AssessmentWorkspaceClientProps) {
@@ -158,19 +200,30 @@ export function AssessmentWorkspaceClient({
   const [showEditAssessmentModal, setShowEditAssessmentModal] = useState(false);
   const [showModerationModal, setShowModerationModal] = useState(false);
   const [allocationDraft, setAllocationDraft] = useState<AllocationDraft>(null);
+  const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(null);
   const [allocationMarkerUserId, setAllocationMarkerUserId] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [importSubmissionType, setImportSubmissionType] = useState<SubmissionType>(SubmissionType.FIRST_SUBMISSION);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
-  const [settingsOpensAt, setSettingsOpensAt] = useState(opensAtInput);
   const [settingsDueAt, setSettingsDueAt] = useState(dueAtInput);
   const [settingsMarkingDeadlineAt, setSettingsMarkingDeadlineAt] = useState(markingDeadlineAtInput);
   const [settingsModeratorUserId, setSettingsModeratorUserId] = useState(currentModeratorUserId);
+  const [settingsMarkerUserIds, setSettingsMarkerUserIds] = useState(currentMarkerUserIds);
   const [moderationStatus, setModerationStatus] = useState<ModerationStatus>(
     moderationStatusFromLabel(initialModeration.statusLabel)
   );
   const [moderationReport, setModerationReport] = useState(initialModeration.report ?? "");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [markerFilterUserId, setMarkerFilterUserId] = useState("");
+  const [submissionTypeFilter, setSubmissionTypeFilter] = useState("");
+  const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
+  const [flagFilter, setFlagFilter] = useState<FlagFilter>("all");
+  const [sortOption, setSortOption] = useState<SortOption>("script_asc");
+  const [reviewStatus, setReviewStatus] = useState<ReviewFlagStatus>(ReviewFlagStatus.FLAGGED);
+  const [reviewReason, setReviewReason] = useState("");
+  const [reviewOutcomeNotes, setReviewOutcomeNotes] = useState("");
+  const [reviewNotifyLeaderUserIds, setReviewNotifyLeaderUserIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!toast) {
@@ -188,7 +241,65 @@ export function AssessmentWorkspaceClient({
     () => scripts.filter((script) => script.assignedToCurrentUser),
     [scripts]
   );
-  const visibleScripts = viewMode === "my_allocation" ? myAllocatedScripts : scripts;
+  const filteredScripts = useMemo(() => {
+    const baseScripts = viewMode === "my_allocation" ? myAllocatedScripts : scripts;
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    const nextScripts = baseScripts.filter((script) => {
+      const matchesSearch =
+        normalizedQuery.length === 0 ||
+        script.turnitinId.toLowerCase().includes(normalizedQuery) ||
+        (script.markerName ?? "").toLowerCase().includes(normalizedQuery);
+
+      const matchesMarker = !markerFilterUserId || script.markerUserId === markerFilterUserId;
+      const matchesSubmissionType = !submissionTypeFilter || script.submissionType === submissionTypeFilter;
+      const matchesGrade =
+        gradeFilter === "all" ||
+        (gradeFilter === "graded" ? script.grade !== null : script.grade === null);
+      const matchesFlag =
+        flagFilter === "all" ||
+        (flagFilter === "unflagged"
+          ? script.reviewFlag === null
+          : flagFilter === "needs_attention"
+            ? Boolean(script.reviewFlag && !isReviewFlagResolved(script.reviewFlag.status))
+            : Boolean(script.reviewFlag && isReviewFlagResolved(script.reviewFlag.status)));
+
+      return matchesSearch && matchesMarker && matchesSubmissionType && matchesGrade && matchesFlag;
+    });
+
+    return [...nextScripts].sort((left, right) => {
+      switch (sortOption) {
+        case "script_desc":
+          return right.turnitinId.localeCompare(left.turnitinId);
+        case "marker_asc":
+          return compareNullableText(left.markerName, right.markerName) || left.turnitinId.localeCompare(right.turnitinId);
+        case "submission_type":
+          return (
+            formatSubmissionType(left.submissionType).localeCompare(formatSubmissionType(right.submissionType)) ||
+            left.turnitinId.localeCompare(right.turnitinId)
+          );
+        case "flag_status":
+          return (
+            formatReviewFlagStatus(left.reviewFlag?.status).localeCompare(formatReviewFlagStatus(right.reviewFlag?.status)) ||
+            left.turnitinId.localeCompare(right.turnitinId)
+          );
+        case "script_asc":
+        default:
+          return left.turnitinId.localeCompare(right.turnitinId);
+      }
+    });
+  }, [
+    flagFilter,
+    gradeFilter,
+    markerFilterUserId,
+    myAllocatedScripts,
+    scripts,
+    searchQuery,
+    sortOption,
+    submissionTypeFilter,
+    viewMode,
+  ]);
+  const visibleScripts = filteredScripts;
   const activeSelectedScriptIds = selectedScriptIds.filter((id) => scripts.some((script) => script.id === id));
   const visibleSelectedScriptIds = activeSelectedScriptIds.filter((id) =>
     visibleScripts.some((script) => script.id === id)
@@ -215,6 +326,7 @@ export function AssessmentWorkspaceClient({
   );
   const canImport =
     extractedIds.length > 0 && duplicateIdsInPaste.length === 0 && existingDuplicateIds.length === 0 && !isPending;
+  const activeReviewScript = reviewDraft ? scripts.find((script) => script.id === reviewDraft.scriptId) ?? null : null;
 
   const showToast = (tone: "success" | "error", message: string) => {
     setToast({ tone, message });
@@ -225,11 +337,19 @@ export function AssessmentWorkspaceClient({
     setAllocationMarkerUserId("");
   };
 
+  const closeReviewModal = () => {
+    setReviewDraft(null);
+    setReviewStatus(ReviewFlagStatus.FLAGGED);
+    setReviewReason("");
+    setReviewOutcomeNotes("");
+    setReviewNotifyLeaderUserIds([]);
+  };
+
   const resetAssessmentSettingsForm = () => {
-    setSettingsOpensAt(opensAtInput);
     setSettingsDueAt(dueAtInput);
     setSettingsMarkingDeadlineAt(markingDeadlineAtInput);
     setSettingsModeratorUserId(currentModeratorUserId);
+    setSettingsMarkerUserIds(currentMarkerUserIds);
   };
 
   const handleViewModeChange = (nextViewMode: ViewMode) => {
@@ -355,6 +475,44 @@ export function AssessmentWorkspaceClient({
 
       closeAllocationModal();
       showToast("success", result.message ?? "Allocation saved.");
+      router.refresh();
+    });
+  };
+
+  const openReviewModal = (script: ScriptRow) => {
+    setReviewDraft({
+      scriptId: script.id,
+      turnitinId: script.turnitinId,
+    });
+    setReviewStatus(script.reviewFlag?.status ?? ReviewFlagStatus.FLAGGED);
+    setReviewReason(script.reviewFlag?.reason ?? "");
+    setReviewOutcomeNotes(script.reviewFlag?.outcomeNotes ?? "");
+    setReviewNotifyLeaderUserIds(script.reviewFlag?.notifiedLeaderUserIds ?? []);
+  };
+
+  const handleReviewFlagSave = () => {
+    if (!reviewDraft) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await saveReviewFlagAction({
+        moduleId,
+        assessmentId,
+        scriptId: reviewDraft.scriptId,
+        status: reviewStatus,
+        reason: reviewReason,
+        outcomeNotes: reviewOutcomeNotes,
+        notifyLeaderUserIds: reviewNotifyLeaderUserIds,
+      });
+
+      if (!result.ok) {
+        showToast("error", result.error);
+        return;
+      }
+
+      closeReviewModal();
+      showToast("success", result.message ?? "Review flag saved.");
       router.refresh();
     });
   };
@@ -571,10 +729,95 @@ export function AssessmentWorkspaceClient({
         <CardHeader className="border-b border-slate-200/80">
           <CardTitle className="text-xl">Submissions</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="space-y-4 p-4">
+          <div className="grid gap-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,0.8fr))]">
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search script ID or marker"
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+            />
+            <select
+              value={markerFilterUserId}
+              onChange={(event) => setMarkerFilterUserId(event.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+            >
+              <option value="">All markers</option>
+              {markerOptions.map((marker) => (
+                <option key={marker.id} value={marker.id}>
+                  {marker.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={submissionTypeFilter}
+              onChange={(event) => setSubmissionTypeFilter(event.target.value)}
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+            >
+              <option value="">All submission types</option>
+              <option value={SubmissionType.FIRST_SUBMISSION}>1st Submission</option>
+              <option value={SubmissionType.SEVEN_DAY_WINDOW}>7-day</option>
+            </select>
+            <select
+              value={gradeFilter}
+              onChange={(event) => setGradeFilter(event.target.value as GradeFilter)}
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+            >
+              <option value="all">All grades</option>
+              <option value="graded">Graded</option>
+              <option value="ungraded">Ungraded</option>
+            </select>
+            <select
+              value={flagFilter}
+              onChange={(event) => setFlagFilter(event.target.value as FlagFilter)}
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+            >
+              <option value="all">All flags</option>
+              <option value="needs_attention">Flagged or under review</option>
+              <option value="resolved">Resolved flags</option>
+              <option value="unflagged">No flag</option>
+            </select>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-500">
+              {visibleScripts.length} of {viewMode === "my_allocation" ? myAllocatedScripts.length : scripts.length} scripts shown
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={sortOption}
+                onChange={(event) => setSortOption(event.target.value as SortOption)}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+              >
+                <option value="script_asc">Sort: Script ID A-Z</option>
+                <option value="script_desc">Sort: Script ID Z-A</option>
+                <option value="marker_asc">Sort: Marker A-Z</option>
+                <option value="submission_type">Sort: Submission type</option>
+                <option value="flag_status">Sort: Flag status</option>
+              </select>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setSearchQuery("");
+                  setMarkerFilterUserId("");
+                  setSubmissionTypeFilter("");
+                  setGradeFilter("all");
+                  setFlagFilter("all");
+                  setSortOption("script_asc");
+                }}
+              >
+                Reset filters
+              </Button>
+            </div>
+          </div>
+
           {visibleScripts.length === 0 ? (
-            <div className="px-6 py-12 text-center text-sm text-slate-500">
-              {viewMode === "my_allocation"
+            <div className="rounded-2xl border border-dashed border-slate-200 px-6 py-12 text-center text-sm text-slate-500">
+              {searchQuery || markerFilterUserId || submissionTypeFilter || gradeFilter !== "all" || flagFilter !== "all"
+                ? "No scripts match the current filters."
+                : viewMode === "my_allocation"
                 ? "No scripts are currently assigned to you."
                 : (
                     <>
@@ -651,19 +894,18 @@ export function AssessmentWorkspaceClient({
                       </td>
                       <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
                         <div className="flex items-center gap-3">
-                          {script.hasReviewFlag ? (
-                            <span title="Flagged for review" className="text-amber-600">
+                          <button
+                            type="button"
+                            onClick={() => openReviewModal(script)}
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${getReviewFlagClasses(script.reviewFlag?.status)}`}
+                            title={script.reviewFlag ? formatReviewFlagStatus(script.reviewFlag.status) : "Flag for review"}
+                          >
+                            {script.reviewFlag?.status === ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW ? (
                               <AlertTriangle className="h-4 w-4" />
-                            </span>
-                          ) : null}
-                          {script.hasIntegrityFlag ? (
-                            <span title="Integrity flag present" className="text-rose-600">
-                              <ShieldAlert className="h-4 w-4" />
-                            </span>
-                          ) : null}
-                          {!script.hasReviewFlag && !script.hasIntegrityFlag ? (
-                            <span className="text-slate-300">—</span>
-                          ) : null}
+                            ) : (
+                              <Flag className="h-4 w-4" />
+                            )}
+                          </button>
                           <a
                             href={buildTurnitinSubmissionUrl(script.turnitinId)}
                             target="_blank"
@@ -688,31 +930,9 @@ export function AssessmentWorkspaceClient({
         open={showEditAssessmentModal}
         onClose={() => setShowEditAssessmentModal(false)}
         title="Edit assessment"
-        description="Update the assessment dates and assigned moderator."
+        description="Update the dates, moderator, and assessment marking team."
       >
         <div className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <label htmlFor="edit-opens-at" className="text-sm font-medium text-slate-700">
-                Opens at
-              </label>
-              <input
-                id="edit-opens-at"
-                type="datetime-local"
-                value={settingsOpensAt}
-                onChange={(event) => setSettingsOpensAt(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
-              />
-            </div>
-            <UserPicker
-              options={moderatorOptions}
-              value={settingsModeratorUserId}
-              onValueChange={setSettingsModeratorUserId}
-              label="Assigned moderator"
-              placeholder="Search for a module member"
-            />
-          </div>
-
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor="edit-due-at" className="text-sm font-medium text-slate-700">
@@ -738,6 +958,25 @@ export function AssessmentWorkspaceClient({
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
               />
             </div>
+            <UserPicker
+              options={moderatorOptions}
+              value={settingsModeratorUserId}
+              onValueChange={setSettingsModeratorUserId}
+              label="Assigned moderator"
+              placeholder="Search for a user"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
+            <UserMultiPicker
+              options={allUserOptions}
+              value={settingsMarkerUserIds}
+              onValueChange={setSettingsMarkerUserIds}
+              label="Marking team"
+              placeholder="Search for a marker to add"
+              addLabel="Add marker"
+              emptyText="No markers selected yet."
+            />
           </div>
 
           <div className="flex justify-end gap-2">
@@ -750,10 +989,10 @@ export function AssessmentWorkspaceClient({
                   const result = await updateAssessmentSettingsAction({
                     moduleId,
                     assessmentId,
-                    opensAt: settingsOpensAt,
                     dueAt: settingsDueAt,
                     markingDeadlineAt: settingsMarkingDeadlineAt,
                     moderatorUserId: settingsModeratorUserId,
+                    markerUserIds: settingsMarkerUserIds,
                   });
 
                   if (!result.ok) {
@@ -804,6 +1043,135 @@ export function AssessmentWorkspaceClient({
             </Button>
             <Button onClick={handleAllocationSave} disabled={isPending}>
               Save allocation
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={reviewDraft !== null}
+        onClose={closeReviewModal}
+        title="Review flag"
+        description={
+          reviewDraft
+            ? `View or update the review status for script ${reviewDraft.turnitinId}.`
+            : "View or update the review status for this script."
+        }
+      >
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Script ID: <span className="font-medium text-slate-900">{reviewDraft?.turnitinId ?? "—"}</span>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={reviewStatus === ReviewFlagStatus.FLAGGED}
+                onChange={() => setReviewStatus(ReviewFlagStatus.FLAGGED)}
+              />
+              <span className="text-sm font-medium text-slate-900">Flagged</span>
+            </label>
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={reviewStatus === ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW}
+                onChange={() => setReviewStatus(ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW)}
+              />
+              <span className="text-sm font-medium text-slate-900">Academic Conduct Review</span>
+            </label>
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={reviewStatus === ReviewFlagStatus.NO_ISSUE}
+                onChange={() => setReviewStatus(ReviewFlagStatus.NO_ISSUE)}
+              />
+              <span className="text-sm font-medium text-slate-900">No issue</span>
+            </label>
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <input
+                type="radio"
+                checked={reviewStatus === ReviewFlagStatus.REVIEW_COMPLETED}
+                onChange={() => setReviewStatus(ReviewFlagStatus.REVIEW_COMPLETED)}
+              />
+              <span className="text-sm font-medium text-slate-900">Review completed</span>
+            </label>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="review-reason" className="text-sm font-medium text-slate-700">
+              Reason for flagging
+            </label>
+            <textarea
+              id="review-reason"
+              value={reviewReason}
+              onChange={(event) => setReviewReason(event.target.value)}
+              rows={4}
+              className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm outline-none ring-sky-500 focus:ring-2"
+              placeholder="Describe why this script needs review..."
+            />
+          </div>
+
+          {reviewStatus === ReviewFlagStatus.REVIEW_COMPLETED ? (
+            <div className="space-y-2">
+              <label htmlFor="review-outcome-notes" className="text-sm font-medium text-slate-700">
+                Review outcome
+              </label>
+              <textarea
+                id="review-outcome-notes"
+                value={reviewOutcomeNotes}
+                onChange={(event) => setReviewOutcomeNotes(event.target.value)}
+                rows={4}
+                className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm outline-none ring-sky-500 focus:ring-2"
+                placeholder="Record the final outcome of the review..."
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
+            <p className="text-sm font-medium text-slate-700">Notify module leader(s)</p>
+            {moduleLeaderOptions.length === 0 ? (
+              <p className="text-sm text-slate-500">No module leaders are available for notification.</p>
+            ) : (
+              <div className="space-y-2">
+                {moduleLeaderOptions.map((leader) => (
+                  <label
+                    key={leader.id}
+                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={reviewNotifyLeaderUserIds.includes(leader.id)}
+                      onChange={(event) =>
+                        setReviewNotifyLeaderUserIds((current) =>
+                          event.target.checked
+                            ? [...current, leader.id]
+                            : current.filter((userId) => userId !== leader.id)
+                        )
+                      }
+                    />
+                    <span>{leader.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {activeReviewScript?.reviewFlag ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Current status:{" "}
+              <span className="font-medium text-slate-900">
+                {formatReviewFlagStatus(activeReviewScript.reviewFlag.status)}
+              </span>
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={closeReviewModal}>
+              Cancel
+            </Button>
+            <Button onClick={handleReviewFlagSave} disabled={isPending || !reviewReason.trim()}>
+              Save review flag
             </Button>
           </div>
         </div>

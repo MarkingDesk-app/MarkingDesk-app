@@ -4,6 +4,13 @@ import { Role } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { getServerSession } from "next-auth";
 
+import {
+  assertUsersExist,
+  deactivateAssessmentMarkerAssignment,
+  normalizeUserIds,
+  replaceAssessmentMarkerAssignments,
+  saveAssessmentMarkerAssignment,
+} from "@/lib/assessment-team";
 import { authOptions } from "@/lib/auth";
 import { inviteUser } from "@/lib/user-invitations";
 import { prisma } from "@/lib/prisma";
@@ -119,19 +126,19 @@ export async function createAcademicYearAction(input: {
   moduleId: string;
   assessmentTemplateId: string;
   academicYear: string;
-  opensAt?: string;
   dueAt: string;
   markingDeadlineAt: string;
   moderatorUserId?: string;
+  markerUserIds: string[];
 }): Promise<ActionResult> {
   try {
     const moduleId = input.moduleId.trim();
     const assessmentTemplateId = input.assessmentTemplateId.trim();
     const academicYear = input.academicYear.trim();
-    const opensAt = parseDateTimeInput(input.opensAt ?? "");
     const dueAt = parseDateTimeInput(input.dueAt);
     const markingDeadlineAt = parseDateTimeInput(input.markingDeadlineAt);
     const moderatorUserId = input.moderatorUserId?.trim() || null;
+    const markerUserIds = normalizeUserIds(input.markerUserIds);
 
     if (!moduleId || !assessmentTemplateId || !academicYear) {
       return { ok: false, error: "Assessment and academic year are required." };
@@ -157,21 +164,10 @@ export async function createAcademicYearAction(input: {
     }
 
     if (moderatorUserId) {
-      const moderatorMembership = await prisma.moduleMembership.findFirst({
-        where: {
-          moduleId,
-          userId: moderatorUserId,
-          active: true,
-        },
-        select: { id: true },
-      });
-
-      if (!moderatorMembership) {
-        return { ok: false, error: "Select an active module member as moderator." };
-      }
+      await assertUsersExist([moderatorUserId]);
     }
 
-    await prisma.assessmentInstance.upsert({
+    const assessmentInstance = await prisma.assessmentInstance.upsert({
       where: {
         assessmentTemplateId_academicYear: {
           assessmentTemplateId,
@@ -179,7 +175,6 @@ export async function createAcademicYearAction(input: {
         },
       },
       update: {
-        opensAt,
         dueAt,
         markingDeadlineAt,
         moderatorUserId,
@@ -187,14 +182,20 @@ export async function createAcademicYearAction(input: {
       create: {
         assessmentTemplateId,
         academicYear,
-        opensAt,
         dueAt,
         markingDeadlineAt,
         moderatorUserId,
       },
+      select: { id: true },
+    });
+
+    await replaceAssessmentMarkerAssignments({
+      assessmentId: assessmentInstance.id,
+      markerUserIds,
     });
 
     revalidatePath(`/modules/${moduleId}`);
+    revalidatePath(`/modules/${moduleId}/assessments/${assessmentInstance.id}`);
     revalidatePath("/dashboard");
 
     return { ok: true, message: "Academic year saved." };
@@ -366,6 +367,159 @@ export async function inviteModuleUserAction(input: {
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to send invitation.",
+    };
+  }
+}
+
+export async function saveAssessmentMarkerAction(input: {
+  moduleId: string;
+  assessmentId: string;
+  userId: string;
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentId = input.assessmentId.trim();
+    const userId = input.userId.trim();
+
+    if (!moduleId || !assessmentId || !userId) {
+      return { ok: false, error: "Assessment and user are required." };
+    }
+
+    await getModuleManagementSession(moduleId);
+
+    const assessment = await prisma.assessmentInstance.findUnique({
+      where: { id: assessmentId },
+      select: {
+        id: true,
+        assessmentTemplate: {
+          select: {
+            moduleId: true,
+          },
+        },
+      },
+    });
+
+    if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
+      return { ok: false, error: "Assessment not found." };
+    }
+
+    await saveAssessmentMarkerAssignment({
+      assessmentId,
+      userId,
+    });
+
+    revalidatePath(`/modules/${moduleId}`);
+    revalidatePath(`/modules/${moduleId}/assessments/${assessmentId}`);
+    revalidatePath("/dashboard");
+
+    return { ok: true, message: "Marker added to the assessment team." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to save the assessment team.",
+    };
+  }
+}
+
+export async function deactivateAssessmentMarkerAction(input: {
+  moduleId: string;
+  assessmentId: string;
+  userId: string;
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentId = input.assessmentId.trim();
+    const userId = input.userId.trim();
+
+    if (!moduleId || !assessmentId || !userId) {
+      return { ok: false, error: "Assessment and user are required." };
+    }
+
+    await getModuleManagementSession(moduleId);
+
+    const assessment = await prisma.assessmentInstance.findUnique({
+      where: { id: assessmentId },
+      select: {
+        id: true,
+        assessmentTemplate: {
+          select: {
+            moduleId: true,
+          },
+        },
+      },
+    });
+
+    if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
+      return { ok: false, error: "Assessment not found." };
+    }
+
+    await deactivateAssessmentMarkerAssignment({
+      assessmentId,
+      userId,
+    });
+
+    revalidatePath(`/modules/${moduleId}`);
+    revalidatePath(`/modules/${moduleId}/assessments/${assessmentId}`);
+    revalidatePath("/dashboard");
+
+    return { ok: true, message: "Marker removed from the assessment team." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to update the assessment team.",
+    };
+  }
+}
+
+export async function inviteAssessmentMarkerAction(input: {
+  moduleId: string;
+  assessmentId: string;
+  name: string;
+  email: string;
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentId = input.assessmentId.trim();
+    const name = input.name.trim();
+    const email = input.email.trim();
+    const session = await getModuleManagementSession(moduleId);
+
+    const assessment = await prisma.assessmentInstance.findUnique({
+      where: { id: assessmentId },
+      select: {
+        id: true,
+        assessmentTemplate: {
+          select: {
+            moduleId: true,
+          },
+        },
+      },
+    });
+
+    if (!assessment || assessment.assessmentTemplate.moduleId !== moduleId) {
+      return { ok: false, error: "Assessment not found." };
+    }
+
+    const invited = await inviteUser({
+      name,
+      email,
+      invitedByName: session.user.name ?? session.user.email ?? "A MarkingDesk user",
+    });
+
+    await saveAssessmentMarkerAssignment({
+      assessmentId,
+      userId: invited.userId,
+    });
+
+    revalidatePath(`/modules/${moduleId}`);
+    revalidatePath(`/modules/${moduleId}/assessments/${assessmentId}`);
+    revalidatePath("/dashboard");
+
+    return { ok: true, message: "Invitation sent and marker added to the assessment team." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to invite the marker.",
     };
   }
 }

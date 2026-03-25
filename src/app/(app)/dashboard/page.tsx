@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 
 import { DashboardClient } from "./dashboard-client";
+import { PageBreadcrumbs } from "@/components/breadcrumb-context";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
@@ -29,7 +30,7 @@ function summarizeModule(module: {
     assessmentInstances: {
       id: string;
       dueAt: Date;
-      scripts: { id: string; grade: number | null }[];
+      scripts: { id: string; grade: number | null; allocation: { markerUserId: string } | null }[];
     }[];
   }[];
 }, currentUserId: string) {
@@ -40,6 +41,19 @@ function summarizeModule(module: {
     0
   );
   const remainingScripts = totalScripts - markedScripts;
+  const myAllocatedScripts = allInstances.reduce(
+    (sum, instance) =>
+      sum + instance.scripts.filter((script) => script.allocation?.markerUserId === currentUserId).length,
+    0
+  );
+  const myMarkedScripts = allInstances.reduce(
+    (sum, instance) =>
+      sum +
+      instance.scripts.filter(
+        (script) => script.allocation?.markerUserId === currentUserId && script.grade !== null
+      ).length,
+    0
+  );
   const nextDeadline = allInstances
     .map((instance) => instance.dueAt)
     .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
@@ -56,6 +70,8 @@ function summarizeModule(module: {
     totalScripts,
     markedScripts,
     remainingScripts,
+    myAllocatedScripts,
+    myMarkedScripts,
     nextDeadline: formatDeadline(nextDeadline),
     progressPercentage,
     currentUserIsLeader: module.memberships.some(
@@ -71,34 +87,34 @@ function summarizeModule(module: {
 }
 
 async function getDashboardModules(userId: string, role: Role) {
-  if (role === Role.ADMIN) {
-    const modules = await prisma.module.findMany({
-      orderBy: { code: "asc" },
-      include: {
-        memberships: {
-          where: { active: true },
+  const includeConfig = {
+    memberships: {
+      where: { active: true, isLeader: true },
+      select: {
+        userId: true,
+        isLeader: true,
+        user: {
           select: {
-            userId: true,
-            isLeader: true,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
-            },
+            id: true,
+            name: true,
+            email: true,
           },
         },
-        assessmentTemplates: {
-          include: {
-            assessmentInstances: {
+      },
+    },
+    assessmentTemplates: {
+      include: {
+        assessmentInstances: {
+          select: {
+            id: true,
+            dueAt: true,
+            scripts: {
               select: {
                 id: true,
-                dueAt: true,
-                scripts: {
+                grade: true,
+                allocation: {
                   select: {
-                    id: true,
-                    grade: true,
+                    markerUserId: true,
                   },
                 },
               },
@@ -106,43 +122,50 @@ async function getDashboardModules(userId: string, role: Role) {
           },
         },
       },
+    },
+  } as const;
+
+  if (role === Role.ADMIN) {
+    const modules = await prisma.module.findMany({
+      orderBy: { code: "asc" },
+      include: includeConfig,
     });
 
     return modules.map((module) => summarizeModule(module, userId));
   }
 
-  const memberships = await prisma.moduleMembership.findMany({
+  const modules = await prisma.module.findMany({
     where: {
-      userId,
-      active: true,
-    },
-    include: {
-      module: {
-        include: {
+      OR: [
+        {
           memberships: {
-            where: { active: true },
-            select: {
-              userId: true,
+            some: {
+              userId,
+              active: true,
               isLeader: true,
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
+            },
+          },
+        },
+        {
+          assessmentTemplates: {
+            some: {
+              assessmentInstances: {
+                some: {
+                  moderatorUserId: userId,
                 },
               },
             },
           },
+        },
+        {
           assessmentTemplates: {
-            include: {
+            some: {
               assessmentInstances: {
-                select: {
-                  id: true,
-                  dueAt: true,
-                  scripts: {
-                    select: {
-                      id: true,
-                      grade: true,
+                some: {
+                  markerAssignments: {
+                    some: {
+                      userId,
+                      active: true,
                     },
                   },
                 },
@@ -150,12 +173,13 @@ async function getDashboardModules(userId: string, role: Role) {
             },
           },
         },
-      },
+      ],
     },
-    orderBy: { module: { code: "asc" } },
+    include: includeConfig,
+    orderBy: { code: "asc" },
   });
 
-  return memberships.map((membership) => summarizeModule(membership.module, userId));
+  return modules.map((module) => summarizeModule(module, userId));
 }
 
 export default async function DashboardPage() {
@@ -180,18 +204,21 @@ export default async function DashboardPage() {
   ]);
 
   return (
-    <DashboardClient
-      currentUserId={session.user.id}
-      modules={modules}
-      allUsers={users.map((user) => ({
-        id: user.id,
-        name: getDisplayName(user),
-        email: user.email,
-        meta:
-          user.passwordHash && user.emailVerified
-            ? undefined
-            : "Invitation pending",
-      }))}
-    />
+    <>
+      <PageBreadcrumbs items={[{ label: "Dashboard", href: "/dashboard", current: true }]} />
+      <DashboardClient
+        currentUserId={session.user.id}
+        modules={modules}
+        allUsers={users.map((user) => ({
+          id: user.id,
+          name: getDisplayName(user),
+          email: user.email,
+          meta:
+            user.passwordHash && user.emailVerified
+              ? undefined
+              : "Invitation pending",
+        }))}
+      />
+    </>
   );
 }

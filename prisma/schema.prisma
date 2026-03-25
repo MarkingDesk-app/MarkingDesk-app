@@ -37,22 +37,11 @@ enum ModerationOutcome {
   INCONSISTENT
 }
 
-enum IntegrityStatus {
-  UNDER_INVESTIGATION
-  SUSPECTED_PLAGIARISM
-  REQUIRES_REVIEW
-}
-
-enum IntegrityOutcome {
-  CAPPED_AT_40
-  FAILED_RESIT
-  NO_VIOLATION
-  OTHER
-}
-
-enum IntegrityVisibility {
-  NORMAL
-  RESTRICTED
+enum ReviewFlagStatus {
+  FLAGGED
+  ACADEMIC_CONDUCT_REVIEW
+  NO_ISSUE
+  REVIEW_COMPLETED
 }
 
 enum AuditAction {
@@ -70,13 +59,15 @@ model User {
   role              Role                 @default(USER)
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
-  moduleMemberships ModuleMembership[]
-  moderatedAssessments AssessmentInstance[] @relation("AssessmentModerator")
-  allocations       Allocation[]         @relation("AllocationMarker")
-  moderationChecks  ModerationCheck[]    @relation("ModerationReviewer")
-  auditLogs         AuditLog[]           @relation("AuditActor")
-  emailVerifications EmailVerification[]
-  passwordResets    PasswordResetToken[]
+  moduleMemberships            ModuleMembership[]
+  moderatedAssessments         AssessmentInstance[] @relation("AssessmentModerator")
+  allocations                  Allocation[]         @relation("AllocationMarker")
+  moderationChecks             ModerationCheck[]    @relation("ModerationReviewer")
+  assessmentMarkerAssignments  AssessmentMarker[]
+  createdReviewFlags           ReviewFlag[]         @relation("ReviewFlagCreator")
+  auditLogs                    AuditLog[]           @relation("AuditActor")
+  emailVerifications           EmailVerification[]
+  passwordResets               PasswordResetToken[]
 }
 
 model Module {
@@ -117,7 +108,6 @@ model AssessmentInstance {
   id                   String              @id @default(cuid())
   assessmentTemplateId String
   academicYear         String
-  opensAt              DateTime?
   dueAt                DateTime
   markingDeadlineAt    DateTime
   moderatorUserId      String?
@@ -126,6 +116,7 @@ model AssessmentInstance {
   moderationCompletedAt DateTime?
   assessmentTemplate   AssessmentTemplate  @relation(fields: [assessmentTemplateId], references: [id], onDelete: Cascade)
   moderatorUser        User?               @relation("AssessmentModerator", fields: [moderatorUserId], references: [id], onDelete: SetNull)
+  markerAssignments    AssessmentMarker[]
   scripts              Script[]
 
   @@unique([assessmentTemplateId, academicYear])
@@ -155,11 +146,25 @@ model Script {
   student              Student?           @relation(fields: [studentId], references: [id], onDelete: SetNull)
   allocation           Allocation?
   moderationChecks     ModerationCheck[]
-  integrityFlag        IntegrityFlag?
+  reviewFlag           ReviewFlag?
 
   @@unique([assessmentInstanceId, turnitinId])
   @@index([turnitinId])
   @@index([status])
+}
+
+model AssessmentMarker {
+  id                   String             @id @default(cuid())
+  assessmentInstanceId String
+  userId               String
+  active               Boolean            @default(true)
+  createdAt            DateTime           @default(now())
+  assessmentInstance   AssessmentInstance @relation(fields: [assessmentInstanceId], references: [id], onDelete: Cascade)
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentInstanceId, userId])
+  @@index([userId, active])
+  @@index([assessmentInstanceId, active])
 }
 
 model Allocation {
@@ -186,14 +191,21 @@ model ModerationCheck {
   @@index([scriptId, checkedAt])
 }
 
-model IntegrityFlag {
-  id         String             @id @default(cuid())
-  scriptId   String             @unique
-  status     IntegrityStatus
-  outcome    IntegrityOutcome?
-  notes      String?
-  visibility IntegrityVisibility @default(NORMAL)
-  script     Script             @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+model ReviewFlag {
+  id                    String           @id @default(cuid())
+  scriptId              String           @unique
+  createdByUserId       String
+  status                ReviewFlagStatus
+  reason                String
+  outcomeNotes          String?
+  notifiedLeaderUserIds String[]         @default([])
+  resolvedAt            DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  script                Script           @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  createdBy             User             @relation("ReviewFlagCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([status])
 }
 
 model AuditLog {

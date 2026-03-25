@@ -143,6 +143,45 @@ export function formatModerationStatus(
   }
 }
 
+export function formatReviewFlagStatus(
+  status:
+    | "FLAGGED"
+    | "ACADEMIC_CONDUCT_REVIEW"
+    | "NO_ISSUE"
+    | "REVIEW_COMPLETED"
+    | null
+    | undefined
+): string {
+  if (!status) {
+    return "No flag";
+  }
+
+  switch (status) {
+    case "FLAGGED":
+      return "Flagged";
+    case "ACADEMIC_CONDUCT_REVIEW":
+      return "Academic Conduct Review";
+    case "NO_ISSUE":
+      return "No issue";
+    case "REVIEW_COMPLETED":
+      return "Review completed";
+    default:
+      return status;
+  }
+}
+
+export function isReviewFlagResolved(
+  status:
+    | "FLAGGED"
+    | "ACADEMIC_CONDUCT_REVIEW"
+    | "NO_ISSUE"
+    | "REVIEW_COMPLETED"
+    | null
+    | undefined
+): boolean {
+  return status === "NO_ISSUE" || status === "REVIEW_COMPLETED";
+}
+
 export function buildBalancedAssignments(
   scriptIds: string[],
   markerIds: string[],

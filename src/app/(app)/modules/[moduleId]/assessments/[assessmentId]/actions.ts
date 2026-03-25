@@ -3,6 +3,7 @@
 import {
   AuditAction,
   ModerationStatus,
+  ReviewFlagStatus,
   Role,
   ScriptStatus,
   SubmissionType,
@@ -16,7 +17,14 @@ import {
   extractTurnitinIds,
   findDuplicateIds,
   formatModerationStatus,
+  formatReviewFlagStatus,
+  isReviewFlagResolved,
 } from "@/lib/assessment-utils";
+import {
+  assertUsersExist,
+  normalizeUserIds,
+  replaceAssessmentMarkerAssignments,
+} from "@/lib/assessment-team";
 import { authOptions } from "@/lib/auth";
 import { recordAuditLog } from "@/lib/audit";
 import { sendEmail } from "@/lib/mailer";
@@ -42,6 +50,8 @@ type AssessmentContext = {
   assessmentId: string;
   isAdmin: boolean;
   isModuleLeader: boolean;
+  isAssessmentMarker: boolean;
+  isAssignedModerator: boolean;
 };
 
 function parseDateTimeInput(value: string): Date | null {
@@ -66,6 +76,7 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
     where: { id: assessmentId },
     select: {
       id: true,
+      moderatorUserId: true,
       assessmentTemplate: {
         select: {
           moduleId: true,
@@ -89,6 +100,8 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
       assessmentId,
       isAdmin: true,
       isModuleLeader: true,
+      isAssessmentMarker: true,
+      isAssignedModerator: true,
     };
   }
 
@@ -101,7 +114,20 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
     select: { isLeader: true },
   });
 
-  if (memberships.length === 0) {
+  const isModuleLeader = memberships.some((membership) => membership.isLeader);
+  const isAssessmentMarker = Boolean(
+    await prisma.assessmentMarker.findFirst({
+      where: {
+        assessmentInstanceId: assessmentId,
+        userId: session.user.id,
+        active: true,
+      },
+      select: { id: true },
+    })
+  );
+  const isAssignedModerator = assessment.moderatorUserId === session.user.id;
+
+  if (!isModuleLeader && !isAssessmentMarker && !isAssignedModerator) {
     throw new Error("You do not have access to this assessment.");
   }
 
@@ -112,7 +138,9 @@ async function getAssessmentContext(moduleId: string, assessmentId: string): Pro
     moduleId,
     assessmentId,
     isAdmin: false,
-    isModuleLeader: memberships.some((membership) => membership.isLeader),
+    isModuleLeader,
+    isAssessmentMarker,
+    isAssignedModerator,
   };
 }
 
@@ -125,18 +153,18 @@ function revalidateAssessmentPaths(moduleId: string, assessmentId: string) {
 export async function updateAssessmentSettingsAction(input: {
   moduleId: string;
   assessmentId: string;
-  opensAt?: string;
   dueAt: string;
   markingDeadlineAt: string;
   moderatorUserId?: string;
+  markerUserIds: string[];
 }): Promise<ActionResult> {
   try {
     const moduleId = input.moduleId.trim();
     const assessmentId = input.assessmentId.trim();
-    const opensAt = parseDateTimeInput(input.opensAt ?? "");
     const dueAt = parseDateTimeInput(input.dueAt);
     const markingDeadlineAt = parseDateTimeInput(input.markingDeadlineAt);
     const moderatorUserId = input.moderatorUserId?.trim() || null;
+    const markerUserIds = normalizeUserIds(input.markerUserIds);
 
     if (!dueAt || !markingDeadlineAt) {
       return { ok: false, error: "Due date and marking deadline are required." };
@@ -161,10 +189,17 @@ export async function updateAssessmentSettingsAction(input: {
             moduleId: true,
           },
         },
-        opensAt: true,
         dueAt: true,
         markingDeadlineAt: true,
         moderatorUserId: true,
+        markerAssignments: {
+          where: {
+            active: true,
+          },
+          select: {
+            userId: true,
+          },
+        },
       },
     });
 
@@ -173,28 +208,21 @@ export async function updateAssessmentSettingsAction(input: {
     }
 
     if (moderatorUserId) {
-      const moderatorMembership = await prisma.moduleMembership.findFirst({
-        where: {
-          moduleId,
-          userId: moderatorUserId,
-          active: true,
-        },
-        select: { id: true },
-      });
-
-      if (!moderatorMembership) {
-        return { ok: false, error: "Select an active module member as moderator." };
-      }
+      await assertUsersExist([moderatorUserId]);
     }
 
     await prisma.assessmentInstance.update({
       where: { id: assessmentId },
       data: {
-        opensAt,
         dueAt,
         markingDeadlineAt,
         moderatorUserId,
       },
+    });
+
+    await replaceAssessmentMarkerAssignments({
+      assessmentId,
+      markerUserIds,
     });
 
     await recordAuditLog({
@@ -204,14 +232,14 @@ export async function updateAssessmentSettingsAction(input: {
       action: AuditAction.UPDATE,
       diff: {
         operation: "update_assessment_settings",
-        opensAtBefore: assessment.opensAt,
-        opensAtAfter: opensAt,
         dueAtBefore: assessment.dueAt,
         dueAtAfter: dueAt,
         markingDeadlineAtBefore: assessment.markingDeadlineAt,
         markingDeadlineAtAfter: markingDeadlineAt,
         moderatorUserIdBefore: assessment.moderatorUserId,
         moderatorUserIdAfter: moderatorUserId,
+        markerUserIdsBefore: assessment.markerAssignments.map((assignment) => assignment.userId),
+        markerUserIdsAfter: markerUserIds,
       },
     });
 
@@ -379,9 +407,9 @@ export async function saveScriptAllocationAction(input: {
       return { ok: true, message: "Allocation cleared." };
     }
 
-    const markerMembership = await prisma.moduleMembership.findFirst({
+    const markerMembership = await prisma.assessmentMarker.findFirst({
       where: {
-        moduleId,
+        assessmentInstanceId: assessmentId,
         userId: markerUserId,
         active: true,
       },
@@ -389,7 +417,7 @@ export async function saveScriptAllocationAction(input: {
     });
 
     if (!markerMembership) {
-      return { ok: false, error: "Select an active module member." };
+      return { ok: false, error: "Select a marker from this assessment team." };
     }
 
     const allocation = await prisma.allocation.upsert({
@@ -439,9 +467,9 @@ export async function autoAssignUnallocatedScriptsAction(input: {
       return { ok: false, error: "Only module leaders can auto-assign scripts." };
     }
 
-    const markerMemberships = await prisma.moduleMembership.findMany({
+    const markerMemberships = await prisma.assessmentMarker.findMany({
       where: {
-        moduleId,
+        assessmentInstanceId: assessmentId,
         active: true,
       },
       select: { userId: true },
@@ -587,12 +615,7 @@ export async function saveScriptGradeAction(input: {
       return { ok: false, error: "Enter a valid numeric grade." };
     }
 
-    const nextStatus =
-      script.status === ScriptStatus.UNDER_REVIEW
-        ? ScriptStatus.UNDER_REVIEW
-        : parsedGrade === null
-          ? ScriptStatus.NOT_STARTED
-          : ScriptStatus.COMPLETED;
+    const nextStatus = parsedGrade === null ? ScriptStatus.NOT_STARTED : ScriptStatus.COMPLETED;
 
     const updated = await prisma.script.update({
       where: { id: scriptId },
@@ -765,6 +788,193 @@ export async function saveAssessmentModerationAction(input: {
     return {
       ok: false,
       error: error instanceof Error ? error.message : "Unable to save the moderation report.",
+    };
+  }
+}
+
+export async function saveReviewFlagAction(input: {
+  moduleId: string;
+  assessmentId: string;
+  scriptId: string;
+  status: ReviewFlagStatus;
+  reason: string;
+  outcomeNotes?: string;
+  notifyLeaderUserIds: string[];
+}): Promise<ActionResult> {
+  try {
+    const moduleId = input.moduleId.trim();
+    const assessmentId = input.assessmentId.trim();
+    const scriptId = input.scriptId.trim();
+    const reason = input.reason.trim();
+    const outcomeNotes = input.outcomeNotes?.trim() || null;
+    const notifyLeaderUserIds = normalizeUserIds(input.notifyLeaderUserIds);
+
+    const context = await getAssessmentContext(moduleId, assessmentId);
+
+    const script = await prisma.script.findUnique({
+      where: { id: scriptId },
+      select: {
+        id: true,
+        turnitinId: true,
+        assessmentInstanceId: true,
+        reviewFlag: {
+          select: {
+            id: true,
+            status: true,
+            reason: true,
+            outcomeNotes: true,
+            notifiedLeaderUserIds: true,
+            resolvedAt: true,
+          },
+        },
+        assessmentInstance: {
+          select: {
+            academicYear: true,
+            dueAt: true,
+            markingDeadlineAt: true,
+            assessmentTemplate: {
+              select: {
+                name: true,
+                module: {
+                  select: {
+                    code: true,
+                    title: true,
+                    memberships: {
+                      where: {
+                        active: true,
+                        isLeader: true,
+                      },
+                      select: {
+                        userId: true,
+                        user: {
+                          select: {
+                            name: true,
+                            email: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!script || script.assessmentInstanceId !== assessmentId) {
+      return { ok: false, error: "Script not found." };
+    }
+
+    if (!script.reviewFlag && !reason) {
+      return { ok: false, error: "Add a reason before flagging this script." };
+    }
+
+    if (input.status === ReviewFlagStatus.REVIEW_COMPLETED && !outcomeNotes) {
+      return { ok: false, error: "Add the review outcome before completing the review." };
+    }
+
+    const leaderIds = script.assessmentInstance.assessmentTemplate.module.memberships.map(
+      (membership) => membership.userId
+    );
+
+    if (notifyLeaderUserIds.some((userId) => !leaderIds.includes(userId))) {
+      return { ok: false, error: "Only module leaders can be selected for notification." };
+    }
+
+    const resolvedAt = isReviewFlagResolved(input.status) ? new Date() : null;
+
+    const reviewFlag = script.reviewFlag
+      ? await prisma.reviewFlag.update({
+          where: { scriptId },
+          data: {
+            status: input.status,
+            reason: reason || script.reviewFlag.reason,
+            outcomeNotes,
+            notifiedLeaderUserIds: notifyLeaderUserIds,
+            resolvedAt,
+          },
+          select: { id: true },
+        })
+      : await prisma.reviewFlag.create({
+          data: {
+            scriptId,
+            createdByUserId: context.sessionUserId,
+            status: input.status,
+            reason,
+            outcomeNotes,
+            notifiedLeaderUserIds: notifyLeaderUserIds,
+            resolvedAt,
+          },
+          select: { id: true },
+        });
+
+    await recordAuditLog({
+      actorUserId: context.sessionUserId,
+      entityType: "ReviewFlag",
+      entityId: reviewFlag.id,
+      action: script.reviewFlag ? AuditAction.UPDATE : AuditAction.CREATE,
+      diff: {
+        scriptId,
+        statusBefore: script.reviewFlag?.status ?? null,
+        statusAfter: input.status,
+        reasonBefore: script.reviewFlag?.reason ?? null,
+        reasonAfter: reason || (script.reviewFlag?.reason ?? null),
+        outcomeNotesBefore: script.reviewFlag?.outcomeNotes ?? null,
+        outcomeNotesAfter: outcomeNotes,
+        notifyLeaderUserIdsBefore: script.reviewFlag?.notifiedLeaderUserIds ?? [],
+        notifyLeaderUserIdsAfter: notifyLeaderUserIds,
+        resolvedAtBefore: script.reviewFlag?.resolvedAt ?? null,
+        resolvedAtAfter: resolvedAt,
+      },
+    });
+
+    let emailWarning: string | null = null;
+    const shouldSendInitialNotification =
+      notifyLeaderUserIds.length > 0 &&
+      (script.reviewFlag === null || isReviewFlagResolved(script.reviewFlag.status));
+
+    if (shouldSendInitialNotification) {
+      const recipients = script.assessmentInstance.assessmentTemplate.module.memberships.filter((membership) =>
+        notifyLeaderUserIds.includes(membership.userId)
+      );
+
+      const subject = `Review flag raised: ${script.assessmentInstance.assessmentTemplate.module.code} ${script.assessmentInstance.assessmentTemplate.name} (${script.assessmentInstance.academicYear})`;
+      const message = [
+        `Module: ${script.assessmentInstance.assessmentTemplate.module.code} - ${script.assessmentInstance.assessmentTemplate.module.title}`,
+        `Assessment: ${script.assessmentInstance.assessmentTemplate.name}`,
+        `Academic year: ${script.assessmentInstance.academicYear}`,
+        `Script ID: ${script.turnitinId}`,
+        `Raised by: ${context.sessionUserName ?? context.sessionUserEmail ?? "MarkingDesk user"}`,
+        `Status: ${formatReviewFlagStatus(input.status)}`,
+        "",
+        "Reason:",
+        reason || script.reviewFlag?.reason || "",
+      ].join("\n");
+
+      try {
+        await Promise.all(
+          recipients
+            .map((recipient) => recipient.user.email)
+            .filter(Boolean)
+            .map((email) => sendEmail(email, subject, message))
+        );
+      } catch (error) {
+        emailWarning = error instanceof Error ? error.message : "Email notification failed.";
+      }
+    }
+
+    revalidateAssessmentPaths(moduleId, assessmentId);
+
+    return {
+      ok: true,
+      message: emailWarning ? `Review flag saved. ${emailWarning}` : "Review flag saved.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to save the review flag.",
     };
   }
 }

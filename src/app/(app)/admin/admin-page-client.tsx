@@ -68,7 +68,6 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
   const [inviteEmail, setInviteEmail] = useState("");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedModuleId, setSelectedModuleId] = useState("");
-  const [membershipIsLeader, setMembershipIsLeader] = useState(false);
   const leaderCounts = useMemo(
     () =>
       memberships.reduce<Record<string, number>>((counts, membership) => {
@@ -105,7 +104,7 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
       const result = await saveMembershipAction({
         userId: selectedUserId,
         moduleId: selectedModuleId,
-        isLeader: membershipIsLeader,
+        isLeader: true,
       });
 
       if (!result.ok) {
@@ -115,7 +114,6 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
 
       setSelectedUserId("");
       setSelectedModuleId("");
-      setMembershipIsLeader(false);
       setFeedback({ tone: "success", message: result.message ?? "Membership saved." });
       router.refresh();
     });
@@ -220,7 +218,7 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl">
               <UsersRound className="h-5 w-5 text-sky-600" />
-              Add User To Module
+              Assign Module Leader
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -251,17 +249,8 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
               </select>
             </div>
 
-            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={membershipIsLeader}
-                onChange={(event) => setMembershipIsLeader(event.target.checked)}
-              />
-              Assign as module leader
-            </label>
-
             <Button onClick={handleMembershipSave} disabled={isPending || !selectedUserId || !selectedModuleId}>
-              Save membership
+              Add module leader
             </Button>
           </CardContent>
         </Card>
@@ -298,7 +287,7 @@ export function AdminPageClient({ userOptions, modules, memberships }: AdminPage
 
       <Card>
         <CardHeader>
-          <CardTitle>Membership Directory</CardTitle>
+          <CardTitle>Module Leadership</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {memberships.length === 0 ? (

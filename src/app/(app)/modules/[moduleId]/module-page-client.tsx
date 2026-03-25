@@ -8,19 +8,22 @@ import { useRouter } from "next/navigation";
 import {
   createAcademicYearAction,
   createAssessmentAction,
+  deactivateAssessmentMarkerAction,
   deactivateModuleMembershipAction,
+  inviteAssessmentMarkerAction,
   inviteModuleUserAction,
+  saveAssessmentMarkerAction,
   saveModuleMembershipAction,
 } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ModalShell } from "@/components/ui/modal-shell";
+import { UserMultiPicker } from "@/components/ui/user-multi-picker";
 import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
-type Member = {
+type ModuleLeader = {
   id: string;
   userId: string;
-  isLeader: boolean;
   displayName: string;
   email: string;
   meta?: string;
@@ -28,6 +31,7 @@ type Member = {
 
 type AssessmentInstanceSummary = {
   id: string;
+  label: string;
   academicYear: string;
   dueAt: string;
   markingDeadlineAt: string;
@@ -35,6 +39,12 @@ type AssessmentInstanceSummary = {
   moderationStatus: string;
   totalScripts: number;
   markedScripts: number;
+  teamMembers: {
+    userId: string;
+    displayName: string;
+    email: string;
+    meta?: string;
+  }[];
 };
 
 type AssessmentSummary = {
@@ -49,9 +59,8 @@ type ModulePageClientProps = {
   moduleTitle: string;
   canManageModule: boolean;
   currentUserIsLeader: boolean;
-  activeMembers: Member[];
+  moduleLeaders: ModuleLeader[];
   allUsers: UserPickerOption[];
-  moderatorOptions: UserPickerOption[];
   assessments: AssessmentSummary[];
 };
 
@@ -84,9 +93,8 @@ export function ModulePageClient({
   moduleTitle,
   canManageModule,
   currentUserIsLeader,
-  activeMembers,
+  moduleLeaders,
   allUsers,
-  moderatorOptions,
   assessments,
 }: ModulePageClientProps) {
   const router = useRouter();
@@ -95,16 +103,31 @@ export function ModulePageClient({
   const [showAssessmentModal, setShowAssessmentModal] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [academicYearModal, setAcademicYearModal] = useState<AssessmentSummary | null>(null);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [newMembershipIsLeader, setNewMembershipIsLeader] = useState(false);
-  const [inviteName, setInviteName] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteIsLeader, setInviteIsLeader] = useState(false);
+  const [selectedLeaderUserId, setSelectedLeaderUserId] = useState("");
+  const [inviteLeaderName, setInviteLeaderName] = useState("");
+  const [inviteLeaderEmail, setInviteLeaderEmail] = useState("");
+  const [selectedAssessmentTeamId, setSelectedAssessmentTeamId] = useState("");
+  const [selectedAssessmentUserId, setSelectedAssessmentUserId] = useState("");
+  const [inviteAssessmentName, setInviteAssessmentName] = useState("");
+  const [inviteAssessmentEmail, setInviteAssessmentEmail] = useState("");
   const [selectedModeratorUserId, setSelectedModeratorUserId] = useState("");
-  const leaderCount = useMemo(
-    () => activeMembers.filter((member) => member.isLeader).length,
-    [activeMembers]
+  const [selectedMarkingTeamUserIds, setSelectedMarkingTeamUserIds] = useState<string[]>([]);
+  const leaderCount = moduleLeaders.length;
+  const assessmentTeamOptions = useMemo(
+    () =>
+      assessments.flatMap((assessment) =>
+        assessment.instances.map((instance) => ({
+          id: instance.id,
+          label: `${assessment.name} / ${instance.academicYear}`,
+          members: instance.teamMembers,
+        }))
+      ),
+    [assessments]
   );
+  const activeAssessmentTeam =
+    assessmentTeamOptions.find((assessmentTeam) => assessmentTeam.id === selectedAssessmentTeamId) ??
+    assessmentTeamOptions[0] ??
+    null;
 
   const handleAssessmentSubmit = async (formData: FormData) => {
     const name = String(formData.get("name") ?? "").trim();
@@ -129,7 +152,6 @@ export function ModulePageClient({
   const handleAcademicYearSubmit = async (formData: FormData) => {
     const assessmentTemplateId = String(formData.get("assessmentTemplateId") ?? "").trim();
     const academicYear = String(formData.get("academicYear") ?? "").trim();
-    const opensAt = String(formData.get("opensAt") ?? "");
     const dueAt = String(formData.get("dueAt") ?? "");
     const markingDeadlineAt = String(formData.get("markingDeadlineAt") ?? "");
 
@@ -138,10 +160,10 @@ export function ModulePageClient({
         moduleId,
         assessmentTemplateId,
         academicYear,
-        opensAt,
         dueAt,
         markingDeadlineAt,
         moderatorUserId: selectedModeratorUserId,
+        markerUserIds: selectedMarkingTeamUserIds,
       });
 
       if (!result.ok) {
@@ -151,17 +173,18 @@ export function ModulePageClient({
 
       setAcademicYearModal(null);
       setSelectedModeratorUserId("");
+      setSelectedMarkingTeamUserIds([]);
       setFeedback({ tone: "success", message: result.message ?? "Academic year saved." });
       router.refresh();
     });
   };
 
-  const handleMembershipSave = () => {
+  const handleLeaderSave = () => {
     startTransition(async () => {
       const result = await saveModuleMembershipAction({
         moduleId,
-        userId: selectedUserId,
-        isLeader: newMembershipIsLeader,
+        userId: selectedLeaderUserId,
+        isLeader: true,
       });
 
       if (!result.ok) {
@@ -169,20 +192,19 @@ export function ModulePageClient({
         return;
       }
 
-      setSelectedUserId("");
-      setNewMembershipIsLeader(false);
-      setFeedback({ tone: "success", message: result.message ?? "Team member saved." });
+      setSelectedLeaderUserId("");
+      setFeedback({ tone: "success", message: result.message ?? "Module leader saved." });
       router.refresh();
     });
   };
 
-  const handleInvite = () => {
+  const handleLeaderInvite = () => {
     startTransition(async () => {
       const result = await inviteModuleUserAction({
         moduleId,
-        name: inviteName,
-        email: inviteEmail,
-        isLeader: inviteIsLeader,
+        name: inviteLeaderName,
+        email: inviteLeaderEmail,
+        isLeader: true,
       });
 
       if (!result.ok) {
@@ -190,15 +212,62 @@ export function ModulePageClient({
         return;
       }
 
-      setInviteName("");
-      setInviteEmail("");
-      setInviteIsLeader(false);
+      setInviteLeaderName("");
+      setInviteLeaderEmail("");
       setFeedback({ tone: "success", message: result.message ?? "Invitation sent." });
       router.refresh();
     });
   };
 
-  const handleDeactivateMembership = (membershipId: string) => {
+  const handleAssessmentMarkerSave = () => {
+    if (!activeAssessmentTeam || !selectedAssessmentUserId) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await saveAssessmentMarkerAction({
+        moduleId,
+        assessmentId: activeAssessmentTeam.id,
+        userId: selectedAssessmentUserId,
+      });
+
+      if (!result.ok) {
+        setFeedback({ tone: "error", message: result.error });
+        return;
+      }
+
+      setSelectedAssessmentUserId("");
+      setFeedback({ tone: "success", message: result.message ?? "Assessment team updated." });
+      router.refresh();
+    });
+  };
+
+  const handleAssessmentMarkerInvite = () => {
+    if (!activeAssessmentTeam) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await inviteAssessmentMarkerAction({
+        moduleId,
+        assessmentId: activeAssessmentTeam.id,
+        name: inviteAssessmentName,
+        email: inviteAssessmentEmail,
+      });
+
+      if (!result.ok) {
+        setFeedback({ tone: "error", message: result.error });
+        return;
+      }
+
+      setInviteAssessmentName("");
+      setInviteAssessmentEmail("");
+      setFeedback({ tone: "success", message: result.message ?? "Invitation sent." });
+      router.refresh();
+    });
+  };
+
+  const handleDeactivateLeader = (membershipId: string) => {
     startTransition(async () => {
       const result = await deactivateModuleMembershipAction({
         moduleId,
@@ -210,17 +279,17 @@ export function ModulePageClient({
         return;
       }
 
-      setFeedback({ tone: "success", message: result.message ?? "Team member removed." });
+      setFeedback({ tone: "success", message: result.message ?? "Module leader removed." });
       router.refresh();
     });
   };
 
-  const handleLeadershipChange = (userId: string, isLeader: boolean) => {
+  const handleAssessmentMarkerRemoval = (assessmentId: string, userId: string) => {
     startTransition(async () => {
-      const result = await saveModuleMembershipAction({
+      const result = await deactivateAssessmentMarkerAction({
         moduleId,
+        assessmentId,
         userId,
-        isLeader,
       });
 
       if (!result.ok) {
@@ -228,10 +297,7 @@ export function ModulePageClient({
         return;
       }
 
-      setFeedback({
-        tone: "success",
-        message: isLeader ? "Module leader assigned." : "Module leader removed.",
-      });
+      setFeedback({ tone: "success", message: result.message ?? "Marker removed from the assessment team." });
       router.refresh();
     });
   };
@@ -253,14 +319,22 @@ export function ModulePageClient({
                 {assessments.length} assessment{assessments.length === 1 ? "" : "s"}
               </span>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
-                {activeMembers.length} team member{activeMembers.length === 1 ? "" : "s"}
+                {moduleLeaders.length} module leader{moduleLeaders.length === 1 ? "" : "s"}
               </span>
             </div>
           </div>
 
           {canManageModule ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={() => setShowTeamModal(true)}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setSelectedAssessmentTeamId(assessmentTeamOptions[0]?.id ?? "");
+                  setSelectedLeaderUserId("");
+                  setSelectedAssessmentUserId("");
+                  setShowTeamModal(true);
+                }}
+              >
                 <Settings2 className="h-4 w-4" />
                 Manage team
               </Button>
@@ -274,45 +348,6 @@ export function ModulePageClient({
 
         <FeedbackMessage feedback={feedback} />
       </section>
-
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <Users className="h-5 w-5 text-sky-600" />
-              Module Team
-            </CardTitle>
-            <p className="mt-1 text-sm text-slate-600">Active members and current module leaders.</p>
-          </div>
-          {canManageModule ? (
-            <Button variant="ghost" onClick={() => setShowTeamModal(true)}>
-              Manage
-            </Button>
-          ) : null}
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {activeMembers.map((member) => (
-              <div key={member.id} className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3">
-                <p className="text-sm font-semibold text-slate-950">{member.displayName}</p>
-                <p className="mt-1 text-sm text-slate-500">{member.email}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                  {member.isLeader ? (
-                    <span className="rounded-full bg-sky-100 px-2.5 py-1 font-medium text-sky-800">
-                      Module leader
-                    </span>
-                  ) : null}
-                  {member.meta ? (
-                    <span className="rounded-full bg-amber-100 px-2.5 py-1 font-medium text-amber-800">
-                      {member.meta}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
 
       <section className="space-y-4">
         <div>
@@ -369,6 +404,9 @@ export function ModulePageClient({
                             <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600">
                               {instance.markedScripts}/{instance.totalScripts} marked
                             </span>
+                            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600">
+                              {instance.teamMembers.length} marker{instance.teamMembers.length === 1 ? "" : "s"}
+                            </span>
                           </div>
                           <div className="space-y-1 text-sm text-slate-600">
                             <p>Due {instance.dueAt}</p>
@@ -419,9 +457,13 @@ export function ModulePageClient({
 
       <ModalShell
         open={academicYearModal !== null}
-        onClose={() => setAcademicYearModal(null)}
+        onClose={() => {
+          setAcademicYearModal(null);
+          setSelectedModeratorUserId("");
+          setSelectedMarkingTeamUserIds([]);
+        }}
         title="Add academic year"
-        description="Create a new yearly run of this assessment and assign the moderator."
+        description="Create a new yearly run of this assessment, assign the moderator, and set the marking team."
       >
         <form action={handleAcademicYearSubmit} className="space-y-4">
           <input type="hidden" name="assessmentTemplateId" value={academicYearModal?.id ?? ""} />
@@ -441,19 +483,8 @@ export function ModulePageClient({
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <label htmlFor="opens-at" className="text-sm font-medium text-slate-700">
-                Opens at
-              </label>
-              <input
-                id="opens-at"
-                name="opensAt"
-                type="datetime-local"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
-              />
-            </div>
-            <div className="space-y-2">
               <label htmlFor="due-at" className="text-sm font-medium text-slate-700">
-                Due at
+                Due date
               </label>
               <input
                 id="due-at"
@@ -463,9 +494,6 @@ export function ModulePageClient({
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
               />
             </div>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <label htmlFor="marking-deadline-at" className="text-sm font-medium text-slate-700">
                 Marking deadline
@@ -479,11 +507,23 @@ export function ModulePageClient({
               />
             </div>
             <UserPicker
-              options={moderatorOptions}
+              options={allUsers}
               value={selectedModeratorUserId}
               onValueChange={setSelectedModeratorUserId}
               label="Assigned moderator"
-              placeholder="Search for a module member"
+              placeholder="Search for a user"
+            />
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
+            <UserMultiPicker
+              options={allUsers}
+              value={selectedMarkingTeamUserIds}
+              onValueChange={setSelectedMarkingTeamUserIds}
+              label="Marking team"
+              placeholder="Search for a marker to add"
+              addLabel="Add marker"
+              emptyText="No markers selected yet."
             />
           </div>
 
@@ -499,128 +539,221 @@ export function ModulePageClient({
         open={showTeamModal}
         onClose={() => setShowTeamModal(false)}
         title="Manage module team"
-        description="Add existing users, invite new users, and update module leadership."
+        description="Manage module leaders and add or remove markers on specific assessments."
       >
         <div className="space-y-6">
           <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
             <div className="flex items-center gap-2 text-slate-950">
               <Users className="h-4 w-4 text-sky-600" />
-              <h3 className="text-sm font-semibold">Add existing user</h3>
+              <h3 className="text-sm font-semibold">Module leaders</h3>
             </div>
 
             <UserPicker
               options={allUsers}
-              value={selectedUserId}
-              onValueChange={setSelectedUserId}
-              placeholder="Search for a user"
+              value={selectedLeaderUserId}
+              onValueChange={setSelectedLeaderUserId}
+              placeholder="Search for a user to add as a module leader"
             />
 
-            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={newMembershipIsLeader}
-                onChange={(event) => setNewMembershipIsLeader(event.target.checked)}
-              />
-              Assign as module leader
-            </label>
-
             <div className="flex justify-end">
-              <Button onClick={handleMembershipSave} disabled={isPending || !selectedUserId}>
-                Save team member
+              <Button onClick={handleLeaderSave} disabled={isPending || !selectedLeaderUserId}>
+                Add module leader
               </Button>
+            </div>
+
+            <div className="space-y-3">
+              {moduleLeaders.map((leader) => {
+                const isOnlyLeader = leaderCount === 1;
+
+                return (
+                  <div
+                    key={leader.id}
+                    className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{leader.displayName}</p>
+                      <p className="mt-1 text-sm text-slate-500">{leader.email}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
+                        Module leader
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeactivateLeader(leader.id)}
+                        disabled={isPending || isOnlyLeader}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
           <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
             <div className="flex items-center gap-2 text-slate-950">
               <UserPlus className="h-4 w-4 text-sky-600" />
-              <h3 className="text-sm font-semibold">Invite new user</h3>
+              <h3 className="text-sm font-semibold">Invite module leader</h3>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <label htmlFor="invite-name" className="text-sm font-medium text-slate-700">
+                <label htmlFor="invite-leader-name" className="text-sm font-medium text-slate-700">
                   Name
                 </label>
                 <input
-                  id="invite-name"
-                  value={inviteName}
-                  onChange={(event) => setInviteName(event.target.value)}
+                  id="invite-leader-name"
+                  value={inviteLeaderName}
+                  onChange={(event) => setInviteLeaderName(event.target.value)}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
                   placeholder="Alex Smith"
                 />
               </div>
               <div className="space-y-2">
-                <label htmlFor="invite-email" className="text-sm font-medium text-slate-700">
+                <label htmlFor="invite-leader-email" className="text-sm font-medium text-slate-700">
                   Email
                 </label>
                 <input
-                  id="invite-email"
-                  value={inviteEmail}
-                  onChange={(event) => setInviteEmail(event.target.value)}
+                  id="invite-leader-email"
+                  value={inviteLeaderEmail}
+                  onChange={(event) => setInviteLeaderEmail(event.target.value)}
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
                   placeholder="alex@example.edu"
                 />
               </div>
             </div>
 
-            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={inviteIsLeader}
-                onChange={(event) => setInviteIsLeader(event.target.checked)}
-              />
-              Add to this module as a leader
-            </label>
-
             <div className="flex justify-end">
-              <Button onClick={handleInvite} disabled={isPending || !inviteName.trim() || !inviteEmail.trim()}>
+              <Button
+                onClick={handleLeaderInvite}
+                disabled={isPending || !inviteLeaderName.trim() || !inviteLeaderEmail.trim()}
+              >
                 Send invitation
               </Button>
             </div>
           </div>
 
-          <div className="space-y-3">
-            {activeMembers.map((member) => {
-              const isOnlyLeader = member.isLeader && leaderCount === 1;
+          <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4">
+            <div className="flex items-center gap-2 text-slate-950">
+              <Users className="h-4 w-4 text-sky-600" />
+              <h3 className="text-sm font-semibold">Assessment marking teams</h3>
+            </div>
 
-              return (
-                <div
-                  key={member.id}
-                  className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between"
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-slate-950">{member.displayName}</p>
-                    <p className="mt-1 text-sm text-slate-500">{member.email}</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    {member.isLeader ? (
-                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
-                        Module leader
-                      </span>
-                    ) : null}
+            {assessmentTeamOptions.length === 0 ? (
+              <p className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">
+                Add an academic year before assigning markers to an assessment.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="assessment-team-select" className="text-sm font-medium text-slate-700">
+                    Assessment
+                  </label>
+                  <select
+                    id="assessment-team-select"
+                    value={activeAssessmentTeam?.id ?? ""}
+                    onChange={(event) => setSelectedAssessmentTeamId(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+                  >
+                    {assessmentTeamOptions.map((assessmentTeam) => (
+                      <option key={assessmentTeam.id} value={assessmentTeam.id}>
+                        {assessmentTeam.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+                  <UserPicker
+                    options={allUsers}
+                    value={selectedAssessmentUserId}
+                    onValueChange={setSelectedAssessmentUserId}
+                    label="Add existing user"
+                    placeholder="Search for a marker to add to this assessment"
+                  />
+
+                  <div className="flex justify-end">
                     <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => handleLeadershipChange(member.userId, !member.isLeader)}
-                      disabled={isPending || isOnlyLeader}
+                      onClick={handleAssessmentMarkerSave}
+                      disabled={isPending || !activeAssessmentTeam || !selectedAssessmentUserId}
                     >
-                      {member.isLeader ? "Remove leader" : "Make leader"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeactivateMembership(member.id)}
-                      disabled={isPending || isOnlyLeader}
-                    >
-                      Remove
+                      Add marker
                     </Button>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label htmlFor="invite-assessment-name" className="text-sm font-medium text-slate-700">
+                        Name
+                      </label>
+                      <input
+                        id="invite-assessment-name"
+                        value={inviteAssessmentName}
+                        onChange={(event) => setInviteAssessmentName(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+                        placeholder="Alex Smith"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="invite-assessment-email" className="text-sm font-medium text-slate-700">
+                        Email
+                      </label>
+                      <input
+                        id="invite-assessment-email"
+                        value={inviteAssessmentEmail}
+                        onChange={(event) => setInviteAssessmentEmail(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none ring-sky-500 focus:ring-2"
+                        placeholder="alex@example.edu"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={handleAssessmentMarkerInvite}
+                      disabled={isPending || !activeAssessmentTeam || !inviteAssessmentName.trim() || !inviteAssessmentEmail.trim()}
+                    >
+                      Invite and add marker
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {activeAssessmentTeam?.members.length ? (
+                    activeAssessmentTeam.members.map((member) => (
+                      <div
+                        key={`${activeAssessmentTeam.id}-${member.userId}`}
+                        className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-950">{member.displayName}</p>
+                          <p className="mt-1 text-sm text-slate-500">{member.email}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleAssessmentMarkerRemoval(activeAssessmentTeam.id, member.userId)}
+                          disabled={isPending}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">
+                      No markers assigned to this assessment yet.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </ModalShell>

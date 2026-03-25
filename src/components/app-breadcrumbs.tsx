@@ -4,6 +4,7 @@ import { ChevronRight, Home } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { useBreadcrumbs } from "@/components/breadcrumb-context";
 import { cn } from "@/lib/utils";
 
 type Crumb = {
@@ -71,14 +72,15 @@ function buildCrumbs(pathname: string): Crumb[] {
 
 export function AppBreadcrumbs() {
   const pathname = usePathname();
-  const crumbs = buildCrumbs(pathname);
+  const { items } = useBreadcrumbs();
+  const crumbs = items.length > 0 ? items : buildCrumbs(pathname);
 
   if (crumbs.length === 0) {
     return null;
   }
 
   return (
-    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center justify-between gap-4">
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-4">
       <ol className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-sm text-slate-500">
         {crumbs.map((crumb, index) => {
           const isLast = index === crumbs.length - 1;
@@ -107,8 +109,6 @@ export function AppBreadcrumbs() {
           );
         })}
       </ol>
-
-      <p className="hidden shrink-0 text-xs uppercase tracking-[0.24em] text-slate-400 lg:block">Workspace</p>
     </nav>
   );
 }

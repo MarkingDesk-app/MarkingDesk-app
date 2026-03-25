@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 
 import { AdminPageClient } from "./admin-page-client";
+import { PageBreadcrumbs } from "@/components/breadcrumb-context";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
@@ -38,6 +39,9 @@ export default async function AdminPage() {
       },
     }),
     prisma.moduleMembership.findMany({
+      where: {
+        isLeader: true,
+      },
       include: {
         user: {
           select: {
@@ -61,38 +65,46 @@ export default async function AdminPage() {
   ]);
 
   return (
-    <AdminPageClient
-      userOptions={users.map((user) => ({
-        id: user.id,
-        name: getDisplayName(user),
-        email: user.email,
-        meta:
-          user.passwordHash && user.emailVerified
-            ? undefined
-            : "Invitation pending",
-      }))}
-      modules={modules.map((module) => ({
-        id: module.id,
-        code: module.code,
-        title: module.title,
-        membershipCount: module._count.memberships,
-        assessmentCount: module._count.assessmentTemplates,
-      }))}
-      memberships={memberships.map((membership) => ({
-        id: membership.id,
-        active: membership.active,
-        isLeader: membership.isLeader,
-        userId: membership.user.id,
-        userName: getDisplayName(membership.user),
-        userEmail: membership.user.email,
-        userMeta:
-          membership.user.passwordHash && membership.user.emailVerified
-            ? undefined
-            : "Invitation pending",
-        moduleId: membership.module.id,
-        moduleCode: membership.module.code,
-        moduleTitle: membership.module.title,
-      }))}
-    />
+    <>
+      <PageBreadcrumbs
+        items={[
+          { label: "Dashboard", href: "/dashboard" },
+          { label: "Admin", href: "/admin", current: true },
+        ]}
+      />
+      <AdminPageClient
+        userOptions={users.map((user) => ({
+          id: user.id,
+          name: getDisplayName(user),
+          email: user.email,
+          meta:
+            user.passwordHash && user.emailVerified
+              ? undefined
+              : "Invitation pending",
+        }))}
+        modules={modules.map((module) => ({
+          id: module.id,
+          code: module.code,
+          title: module.title,
+          membershipCount: module._count.memberships,
+          assessmentCount: module._count.assessmentTemplates,
+        }))}
+        memberships={memberships.map((membership) => ({
+          id: membership.id,
+          active: membership.active,
+          isLeader: membership.isLeader,
+          userId: membership.user.id,
+          userName: getDisplayName(membership.user),
+          userEmail: membership.user.email,
+          userMeta:
+            membership.user.passwordHash && membership.user.emailVerified
+              ? undefined
+              : "Invitation pending",
+          moduleId: membership.module.id,
+          moduleCode: membership.module.code,
+          moduleTitle: membership.module.title,
+        }))}
+      />
+    </>
   );
 }

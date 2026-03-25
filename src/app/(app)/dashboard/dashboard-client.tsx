@@ -1,13 +1,13 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { ArrowRight, BookCopy, CheckCircle2, Clock3, FolderKanban, Plus, X } from "lucide-react";
+import { ArrowRight, Clock3, Plus, Rows3, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { createModuleAction } from "./actions";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { ModalShell } from "@/components/ui/modal-shell";
 import { UserPicker, type UserPickerOption } from "@/components/ui/user-picker";
 
@@ -19,6 +19,8 @@ type ModuleSummary = {
   totalScripts: number;
   markedScripts: number;
   remainingScripts: number;
+  myAllocatedScripts: number;
+  myMarkedScripts: number;
   nextDeadline: string;
   progressPercentage: number;
   leaderSummary: string;
@@ -64,9 +66,6 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
   const [leaderPickerValue, setLeaderPickerValue] = useState(currentUserId);
   const [selectedLeaderIds, setSelectedLeaderIds] = useState<string[]>([currentUserId]);
 
-  const totalAssessments = modules.reduce((sum, module) => sum + module.assessments, 0);
-  const totalScripts = modules.reduce((sum, module) => sum + module.totalScripts, 0);
-  const totalMarked = modules.reduce((sum, module) => sum + module.markedScripts, 0);
   const selectedLeaders = selectedLeaderIds
     .map((leaderId) => allUsers.find((user) => user.id === leaderId))
     .filter(Boolean) as UserPickerOption[];
@@ -119,51 +118,27 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">Dashboard</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Marking overview</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Your modules</h1>
           </div>
 
-          <Button
-            variant="secondary"
-            onClick={() => {
-              resetCreateModuleForm();
-              setShowCreateModuleModal(true);
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            Create module
-          </Button>
-        </div>
-
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader className="space-y-3">
-              <div className="flex items-center justify-between text-slate-500">
-                <span className="text-sm">Modules</span>
-                <BookCopy className="h-4 w-4 text-sky-600" />
-              </div>
-              <CardTitle className="text-3xl">{modules.length}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="space-y-3">
-              <div className="flex items-center justify-between text-slate-500">
-                <span className="text-sm">Assessments</span>
-                <FolderKanban className="h-4 w-4 text-sky-600" />
-              </div>
-              <CardTitle className="text-3xl">{totalAssessments}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="space-y-3">
-              <div className="flex items-center justify-between text-slate-500">
-                <span className="text-sm">Marked submissions</span>
-                <CheckCircle2 className="h-4 w-4 text-sky-600" />
-              </div>
-              <CardTitle className="text-3xl">
-                {totalMarked}/{totalScripts}
-              </CardTitle>
-            </CardHeader>
-          </Card>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" asChild>
+              <Link href="/dashboard/timeline">
+                <Rows3 className="h-4 w-4" />
+                View timeline
+              </Link>
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                resetCreateModuleForm();
+                setShowCreateModuleModal(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Create module
+            </Button>
+          </div>
         </div>
 
         <div className="mt-5">
@@ -205,9 +180,11 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
 
                 <p className="mt-3 text-sm text-slate-600">{module.leaderSummary}</p>
 
-                <div className="mt-5 grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
+                <div className="mt-5 grid gap-4">
                   <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Marking Progress</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Overall Marking Progress
+                    </p>
                     <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
                       {module.markedScripts}/{module.totalScripts} completed
                     </p>
@@ -220,13 +197,33 @@ export function DashboardClient({ currentUserId, modules, allUsers }: DashboardC
                     <p className="mt-3 text-sm text-slate-500">{module.remainingScripts} submissions remaining</p>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Next Deadline</p>
-                    <div className="mt-3 flex items-start gap-3">
-                      <Clock3 className="mt-0.5 h-4 w-4 text-sky-600" />
-                      <div className="space-y-2 text-sm text-slate-600">
-                        <p>{module.nextDeadline}</p>
-                        <p>{module.assessments} assessments in this module</p>
+                  <div className="grid gap-4 md:grid-cols-[1fr_0.9fr]">
+                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                        Your Allocation Progress
+                      </p>
+                      {module.myAllocatedScripts > 0 ? (
+                        <>
+                          <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                            {module.myMarkedScripts}/{module.myAllocatedScripts} marked
+                          </p>
+                          <p className="mt-3 text-sm text-slate-500">
+                            {module.myAllocatedScripts - module.myMarkedScripts} still on your list
+                          </p>
+                        </>
+                      ) : (
+                        <p className="mt-3 text-sm text-slate-500">No scripts allocated to you.</p>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Next Deadline</p>
+                      <div className="mt-3 flex items-start gap-3">
+                        <Clock3 className="mt-0.5 h-4 w-4 text-sky-600" />
+                        <div className="space-y-2 text-sm text-slate-600">
+                          <p>{module.nextDeadline}</p>
+                          <p>{module.assessments} assessments in this module</p>
+                        </div>
                       </div>
                     </div>
                   </div>

@@ -1,8 +1,7 @@
 import {
-  IntegrityStatus,
-  IntegrityVisibility,
   ModerationStatus,
   PrismaClient,
+  ReviewFlagStatus,
   Role,
   ScriptStatus,
   SubmissionType,
@@ -226,6 +225,25 @@ async function main() {
     });
   }
 
+  await Promise.all(
+    allocationTargets.map((userId) =>
+      prisma.assessmentMarker.upsert({
+        where: {
+          assessmentInstanceId_userId: {
+            assessmentInstanceId: assessment.id,
+            userId,
+          },
+        },
+        update: { active: true },
+        create: {
+          assessmentInstanceId: assessment.id,
+          userId,
+          active: true,
+        },
+      })
+    )
+  );
+
   if (scripts[0]) {
     await prisma.script.update({
       where: { id: scripts[0].id },
@@ -249,18 +267,20 @@ async function main() {
   }
 
   if (scripts[2]) {
-    await prisma.integrityFlag.upsert({
+    await prisma.reviewFlag.upsert({
       where: { scriptId: scripts[2].id },
       update: {
-        status: IntegrityStatus.SUSPECTED_PLAGIARISM,
-        visibility: IntegrityVisibility.RESTRICTED,
-        notes: "Similarity report requires formal review.",
+        createdByUserId: leader?.id ?? marker?.id ?? secondMarker?.id ?? moderatorUser?.id ?? users[0]?.id ?? "",
+        status: ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW,
+        reason: "Similarity report requires formal review.",
+        notifiedLeaderUserIds: leader?.id ? [leader.id] : [],
       },
       create: {
         scriptId: scripts[2].id,
-        status: IntegrityStatus.SUSPECTED_PLAGIARISM,
-        visibility: IntegrityVisibility.RESTRICTED,
-        notes: "Similarity report requires formal review.",
+        createdByUserId: leader?.id ?? marker?.id ?? secondMarker?.id ?? moderatorUser?.id ?? users[0]?.id ?? "",
+        status: ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW,
+        reason: "Similarity report requires formal review.",
+        notifiedLeaderUserIds: leader?.id ? [leader.id] : [],
       },
     });
   }

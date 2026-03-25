@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/review-flag-reminders",
+      "schedule": "0 7 * * *"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 
 import { AssessmentWorkspaceClient } from "./assessment-workspace-client";
+import { PageBreadcrumbs } from "@/components/breadcrumb-context";
 import { formatModerationStatus } from "@/lib/assessment-utils";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -56,6 +57,22 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
   const assessment = await prisma.assessmentInstance.findUnique({
     where: { id: assessmentId },
     include: {
+      markerAssignments: {
+        where: {
+          active: true,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              passwordHash: true,
+              emailVerified: true,
+            },
+          },
+        },
+      },
       moderatorUser: {
         select: {
           id: true,
@@ -82,9 +99,13 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
               },
             },
           },
-          integrityFlag: {
+          reviewFlag: {
             select: {
               id: true,
+              status: true,
+              reason: true,
+              outcomeNotes: true,
+              notifiedLeaderUserIds: true,
             },
           },
         },
@@ -100,6 +121,7 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
     where: {
       moduleId,
       active: true,
+      isLeader: true,
     },
     include: {
       user: {
@@ -117,82 +139,128 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
 
   const isAdmin = session.user.role === Role.ADMIN;
   const currentMemberships = moduleMemberships.filter((membership) => membership.userId === session.user.id);
+  const currentUserIsAssessmentMarker = assessment.markerAssignments.some(
+    (assignment) => assignment.userId === session.user.id
+  );
+  const currentUserIsModerator = assessment.moderatorUserId === session.user.id;
 
-  if (!isAdmin && currentMemberships.length === 0) {
+  if (!isAdmin && currentMemberships.length === 0 && !currentUserIsAssessmentMarker && !currentUserIsModerator) {
     notFound();
   }
 
   const isModuleLeader = isAdmin || currentMemberships.some((membership) => membership.isLeader);
   const canManageAssessment = isAdmin || isModuleLeader;
+  const allUsers = canManageAssessment
+    ? await prisma.user.findMany({
+        orderBy: [{ name: "asc" }, { email: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          passwordHash: true,
+          emailVerified: true,
+        },
+      })
+    : [];
   const canSubmitModeration = assessment.moderatorUserId === session.user.id;
   const workspaceVersion = assessment.scripts
     .map((script) => `${script.id}:${script.version}:${script.allocation?.markerUserId ?? ""}`)
     .join("|");
-  const markerOptions = moduleMemberships
+  const markerOptions = assessment.markerAssignments
     .map((membership) => ({
       id: membership.user.id,
       name: getDisplayName(membership.user),
       email: membership.user.email,
       meta: [
-        membership.isLeader ? "Module leader" : null,
         membership.user.passwordHash && membership.user.emailVerified ? null : "Invitation pending",
       ]
         .filter(Boolean)
         .join(" · ") || undefined,
     }));
-  const moderatorOptions = moduleMemberships
+  const moderatorOptions = allUsers
     .map((membership) => ({
-      id: membership.user.id,
-      name: getDisplayName(membership.user),
-      email: membership.user.email,
+      id: membership.id,
+      name: getDisplayName(membership),
+      email: membership.email,
       meta: [
-        membership.isLeader ? "Module leader" : null,
-        membership.user.passwordHash && membership.user.emailVerified ? null : "Invitation pending",
+        membership.passwordHash && membership.emailVerified ? null : "Invitation pending",
       ]
         .filter(Boolean)
         .join(" · ") || undefined,
     }));
 
   return (
-    <AssessmentWorkspaceClient
-      key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}:${assessment.dueAt.getTime()}:${assessment.markingDeadlineAt.getTime()}:${assessment.opensAt?.getTime() ?? 0}:${assessment.moderatorUserId ?? ""}`}
-      moduleId={moduleId}
-      assessmentId={assessmentId}
-      moduleCode={assessment.assessmentTemplate.module.code}
-      assessmentName={assessment.assessmentTemplate.name}
-      academicYear={assessment.academicYear}
-      dueAt={formatDateTime(assessment.dueAt)}
-      markingDeadlineAt={formatDateTime(assessment.markingDeadlineAt)}
-      canManageAssessment={canManageAssessment}
-      canSubmitModeration={canSubmitModeration}
-      markerOptions={markerOptions}
-      moderatorOptions={moderatorOptions}
-      opensAtInput={formatDateTimeLocalInput(assessment.opensAt)}
-      dueAtInput={formatDateTimeLocalInput(assessment.dueAt)}
-      markingDeadlineAtInput={formatDateTimeLocalInput(assessment.markingDeadlineAt)}
-      currentModeratorUserId={assessment.moderatorUserId ?? ""}
-      scripts={assessment.scripts.map((script) => ({
-        id: script.id,
-        turnitinId: script.turnitinId,
-        submissionType: script.submissionType,
-        grade: script.grade,
-        status: script.status,
-        markerUserId: script.allocation?.markerUserId ?? null,
-        markerName: script.allocation?.marker ? getDisplayName(script.allocation.marker) : null,
-        canMark:
-          isAdmin || isModuleLeader || (script.allocation?.markerUserId ?? null) === session.user.id,
-        assignedToCurrentUser: (script.allocation?.markerUserId ?? null) === session.user.id,
-        hasIntegrityFlag: Boolean(script.integrityFlag),
-        hasReviewFlag: script.status === "UNDER_REVIEW",
-      }))}
-      moderation={{
-        moderatorName: assessment.moderatorUser ? getDisplayName(assessment.moderatorUser) : null,
-        moderatorEmail: assessment.moderatorUser?.email ?? null,
-        statusLabel: formatModerationStatus(assessment.moderationStatus),
-        completedAt: assessment.moderationCompletedAt ? formatDateTime(assessment.moderationCompletedAt) : null,
-        report: assessment.moderationReport,
-        hasCompletedModeration: Boolean(assessment.moderationCompletedAt),
-      }}
-    />
+    <>
+      <PageBreadcrumbs
+        items={[
+          { label: "Dashboard", href: "/dashboard" },
+          { label: assessment.assessmentTemplate.module.code, href: `/modules/${moduleId}` },
+          {
+            label: assessment.assessmentTemplate.name,
+            href: `/modules/${moduleId}/assessments/${assessmentId}`,
+            current: true,
+          },
+        ]}
+      />
+      <AssessmentWorkspaceClient
+        key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}:${assessment.dueAt.getTime()}:${assessment.markingDeadlineAt.getTime()}:${assessment.moderatorUserId ?? ""}`}
+        moduleId={moduleId}
+        assessmentId={assessmentId}
+        moduleCode={assessment.assessmentTemplate.module.code}
+        assessmentName={assessment.assessmentTemplate.name}
+        academicYear={assessment.academicYear}
+        dueAt={formatDateTime(assessment.dueAt)}
+        markingDeadlineAt={formatDateTime(assessment.markingDeadlineAt)}
+        canManageAssessment={canManageAssessment}
+        canSubmitModeration={canSubmitModeration}
+        markerOptions={markerOptions}
+        moderatorOptions={moderatorOptions}
+        allUserOptions={allUsers.map((user) => ({
+          id: user.id,
+          name: getDisplayName(user),
+          email: user.email,
+          meta: user.passwordHash && user.emailVerified ? undefined : "Invitation pending",
+        }))}
+        moduleLeaderOptions={moduleMemberships.map((membership) => ({
+          id: membership.user.id,
+          name: getDisplayName(membership.user),
+          email: membership.user.email,
+          meta: membership.user.passwordHash && membership.user.emailVerified ? undefined : "Invitation pending",
+        }))}
+        dueAtInput={formatDateTimeLocalInput(assessment.dueAt)}
+        markingDeadlineAtInput={formatDateTimeLocalInput(assessment.markingDeadlineAt)}
+        currentModeratorUserId={assessment.moderatorUserId ?? ""}
+        currentMarkerUserIds={assessment.markerAssignments.map((assignment) => assignment.userId)}
+        scripts={assessment.scripts.map((script) => ({
+          id: script.id,
+          turnitinId: script.turnitinId,
+          submissionType: script.submissionType,
+          grade: script.grade,
+          status: script.status,
+          markerUserId: script.allocation?.markerUserId ?? null,
+          markerName: script.allocation?.marker ? getDisplayName(script.allocation.marker) : null,
+          canMark:
+            isAdmin || isModuleLeader || (script.allocation?.markerUserId ?? null) === session.user.id,
+          assignedToCurrentUser: (script.allocation?.markerUserId ?? null) === session.user.id,
+          reviewFlag: script.reviewFlag
+            ? {
+                id: script.reviewFlag.id,
+                status: script.reviewFlag.status,
+                reason: script.reviewFlag.reason,
+                outcomeNotes: script.reviewFlag.outcomeNotes,
+                notifiedLeaderUserIds: script.reviewFlag.notifiedLeaderUserIds,
+              }
+            : null,
+        }))}
+        moderation={{
+          moderatorName: assessment.moderatorUser ? getDisplayName(assessment.moderatorUser) : null,
+          moderatorEmail: assessment.moderatorUser?.email ?? null,
+          statusLabel: formatModerationStatus(assessment.moderationStatus),
+          completedAt: assessment.moderationCompletedAt ? formatDateTime(assessment.moderationCompletedAt) : null,
+          report: assessment.moderationReport,
+          hasCompletedModeration: Boolean(assessment.moderationCompletedAt),
+        }}
+      />
+    </>
   );
 }

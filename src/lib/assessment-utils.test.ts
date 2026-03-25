@@ -7,7 +7,9 @@ import {
   extractTurnitinIds,
   findDuplicateIds,
   formatModerationStatus,
+  formatReviewFlagStatus,
   formatSubmissionType,
+  isReviewFlagResolved,
   parseScriptCsv,
 } from "@/lib/assessment-utils";
 
@@ -92,5 +94,24 @@ describe("formatModerationStatus", () => {
     assert.equal(formatModerationStatus("NO_ISSUES"), "No issues");
     assert.equal(formatModerationStatus("MINOR_ADJUSTMENTS_REQUIRED"), "Minor adjustments required");
     assert.equal(formatModerationStatus("MAJOR_ISSUES"), "Major issues");
+  });
+});
+
+describe("formatReviewFlagStatus", () => {
+  test("formats review flag labels for the UI", () => {
+    assert.equal(formatReviewFlagStatus(null), "No flag");
+    assert.equal(formatReviewFlagStatus("FLAGGED"), "Flagged");
+    assert.equal(formatReviewFlagStatus("ACADEMIC_CONDUCT_REVIEW"), "Academic Conduct Review");
+    assert.equal(formatReviewFlagStatus("NO_ISSUE"), "No issue");
+    assert.equal(formatReviewFlagStatus("REVIEW_COMPLETED"), "Review completed");
+  });
+});
+
+describe("isReviewFlagResolved", () => {
+  test("returns whether a review flag is resolved", () => {
+    assert.equal(isReviewFlagResolved("FLAGGED"), false);
+    assert.equal(isReviewFlagResolved("ACADEMIC_CONDUCT_REVIEW"), false);
+    assert.equal(isReviewFlagResolved("NO_ISSUE"), true);
+    assert.equal(isReviewFlagResolved("REVIEW_COMPLETED"), true);
   });
 });
