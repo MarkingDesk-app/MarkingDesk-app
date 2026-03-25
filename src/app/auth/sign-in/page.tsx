@@ -21,7 +21,7 @@ export default async function SignInPage() {
             Marking Manager
           </h1>
           <p className="mt-2 text-sm text-slate-700">
-            Built by Dr Bradley Kennedy - <a href="https://apps.bradk.co.uk" className="text-blue-600 hover:underline">Learn more.</a>
+            Built by Dr Bradley Kennedy - <a href="https://apps.bradk.co.uk" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Learn more.</a>
           </p>
         </div>
 
