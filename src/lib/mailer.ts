@@ -1,4 +1,5 @@
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const APP_NAME = "MarkingDesk";
 
 function extractEmail(input?: string | null): string | null {
   if (!input) return null;
@@ -26,6 +27,29 @@ function logMockEmail(to: string, subject: string, message: string, cc?: string[
   console.log(`\n[Mock Email]\nTo: ${to}${ccLine}\nSubject: ${subject}\n\n${message}\n`);
 }
 
+function getAppUrl(): string {
+  return (process.env.NEXTAUTH_URL || "https://markingdesk.app").trim().replace(/\/$/, "");
+}
+
+function brandSubject(subject: string): string {
+  const trimmed = subject.trim();
+  return trimmed.startsWith(`[${APP_NAME}]`) ? trimmed : `[${APP_NAME}] ${trimmed}`;
+}
+
+function brandMessage(message: string): string {
+  const trimmedMessage = message.trim();
+
+  return [
+    `${APP_NAME} notification`,
+    "",
+    "This message was sent by MarkingDesk.",
+    "The sending email address may use another domain, but this notification relates to your MarkingDesk account and workflow.",
+    `App: ${getAppUrl()}`,
+    "",
+    trimmedMessage,
+  ].join("\n");
+}
+
 export async function sendEmail(
   to: string,
   subject: string,
@@ -40,6 +64,8 @@ export async function sendEmail(
   const ccRecipients = normalizeRecipients(options.cc ?? [])
     .map((recipientEmail) => extractEmail(recipientEmail))
     .filter((recipientEmail): recipientEmail is string => recipientEmail !== null && EMAIL_REGEX.test(recipientEmail));
+  const brandedSubject = brandSubject(subject);
+  const brandedMessage = brandMessage(message);
 
   const fromRaw = (process.env.MAILGUN_FROM_ADDRESS || "").trim();
   const fromEmail = extractEmail(fromRaw);
@@ -55,15 +81,15 @@ export async function sendEmail(
     if (missingConfig && process.env.NODE_ENV === "production") {
       console.warn("[Email] Mailgun is not configured. Using mock email output.");
     }
-    logMockEmail(recipient, subject, message, ccRecipients);
+    logMockEmail(recipient, brandedSubject, brandedMessage, ccRecipients);
     return;
   }
 
   const body = new URLSearchParams({
     from: fromRaw,
     to: recipient,
-    subject,
-    text: message,
+    subject: brandedSubject,
+    text: brandedMessage,
   });
 
   if (ccRecipients.length > 0) {

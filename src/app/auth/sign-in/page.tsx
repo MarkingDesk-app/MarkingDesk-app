@@ -20,9 +20,6 @@ export default async function SignInPage() {
             <ShieldCheck className="h-6 w-6 text-blue-600" />
             Marking Manager
           </h1>
-          <p className="mt-2 text-sm text-blue-900">
-            Secure sign-in for marking allocations, moderation checks, and audit workflows.
-          </p>
         </div>
 
         <Card>

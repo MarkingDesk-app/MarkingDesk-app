@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://markingdesk.app"),
   title: "MarkingDesk",
   description: "A streamlined workspace for marking, moderation, and submission management.",
 };
