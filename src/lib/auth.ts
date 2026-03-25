@@ -152,21 +152,47 @@ export const authOptions: NextAuthOptions = {
         token.role = user.role;
       }
 
+      if (user?.name) {
+        token.name = user.name;
+      }
+
+      if (user?.email) {
+        token.email = user.email;
+      }
+
+      const hasTokenIdentity =
+        typeof token.userId === "string" &&
+        token.userId.length > 0 &&
+        typeof token.role === "string" &&
+        token.role.length > 0;
+
+      // Once the token already knows the user id and role, avoid a database lookup on every
+      // session read. This keeps normal navigation working during short-lived database hiccups.
+      if (hasTokenIdentity && !user) {
+        return token;
+      }
+
       if (!token.email || typeof token.email !== "string") {
         return token;
       }
 
-      const dbUser = await prisma.user.findUnique({
-        where: { email: token.email.toLowerCase() },
-        select: { id: true, role: true, name: true },
-      });
+      try {
+        const dbUser = await prisma.user.findUnique({
+          where: { email: token.email.toLowerCase() },
+          select: { id: true, role: true, name: true },
+        });
 
-      if (dbUser) {
-        token.userId = dbUser.id;
-        token.role = dbUser.role;
-        token.name = dbUser.name;
-      } else {
-        token.role = Role.USER;
+        if (dbUser) {
+          token.userId = dbUser.id;
+          token.role = dbUser.role;
+          token.name = dbUser.name;
+        } else if (!hasTokenIdentity) {
+          token.role = Role.USER;
+        }
+      } catch (error) {
+        if (!hasTokenIdentity) {
+          throw error;
+        }
       }
 
       return token;
