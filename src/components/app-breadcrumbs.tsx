@@ -72,8 +72,8 @@ function buildCrumbs(pathname: string): Crumb[] {
 
 export function AppBreadcrumbs() {
   const pathname = usePathname();
-  const { items } = useBreadcrumbs();
-  const crumbs = items.length > 0 ? items : buildCrumbs(pathname);
+  const { items, pathname: breadcrumbPathname } = useBreadcrumbs();
+  const crumbs = breadcrumbPathname === pathname && items.length > 0 ? items : buildCrumbs(pathname);
 
   if (crumbs.length === 0) {
     return null;
