@@ -2,10 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { ShieldCheck, UsersRound } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { inviteUserAction, saveMembershipAction, toggleMembershipAction } from "./actions";
+import { AppNavLink } from "@/components/app-nav-link";
 import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -272,9 +272,10 @@ export function AdminPageClient({ modules, memberships }: AdminPageClientProps) 
             </p>
           ) : (
             modules.map((module) => (
-              <Link
+              <AppNavLink
                 key={module.id}
                 href={`/modules/${module.id}`}
+                fullReloadOnAdmin
                 className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-4 transition hover:border-sky-200 hover:bg-sky-50/60"
               >
                 <div>
@@ -284,7 +285,7 @@ export function AdminPageClient({ modules, memberships }: AdminPageClientProps) 
                 <p className="text-xs text-slate-500">
                   {module.membershipCount} members, {module.assessmentCount} assessments
                 </p>
-              </Link>
+              </AppNavLink>
             ))
           )}
         </CardContent>

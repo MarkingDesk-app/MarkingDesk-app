@@ -1,9 +1,9 @@
 "use client";
 
 import { ChevronRight, Home } from "lucide-react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { AppNavLink } from "@/components/app-nav-link";
 import { useBreadcrumbs } from "@/components/breadcrumb-context";
 import { cn } from "@/lib/utils";
 
@@ -95,15 +95,16 @@ export function AppBreadcrumbs() {
                   <span>{crumb.label}</span>
                 </span>
               ) : (
-                <Link
+                <AppNavLink
                   href={crumb.href}
+                  fullReloadOnAdmin
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                   )}
                 >
                   {isFirst ? <Home className="h-3.5 w-3.5" /> : null}
                   {crumb.label}
-                </Link>
+                </AppNavLink>
               )}
             </li>
           );

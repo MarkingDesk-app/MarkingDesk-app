@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { GraduationCap } from "lucide-react";
 import { Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 
+import { AppNavLink } from "@/components/app-nav-link";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { BreadcrumbProvider } from "@/components/breadcrumb-context";
@@ -28,7 +28,7 @@ export default async function ProtectedLayout({
         <header className="sticky top-0 z-30 border-b border-white/60 bg-white/75 backdrop-blur-xl">
           <div className="mx-auto w-full max-w-7xl px-4 py-3 sm:px-6">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <Link href="/dashboard" className="inline-flex items-center gap-3 text-slate-950">
+              <AppNavLink href="/dashboard" className="inline-flex items-center gap-3 text-slate-950" fullReloadOnAdmin>
                 <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-[0_10px_24px_rgba(14,165,233,0.28)]">
                   <GraduationCap className="h-5 w-5" />
                 </span>
@@ -38,7 +38,7 @@ export default async function ProtectedLayout({
                     Marking and moderation workspace
                   </span>
                 </span>
-              </Link>
+              </AppNavLink>
 
               <div className="flex flex-col gap-3 lg:items-end">
                 <div className="flex items-center gap-3 rounded-2xl border border-white/70 bg-white/85 px-3 py-2 shadow-sm">
