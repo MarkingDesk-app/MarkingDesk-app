@@ -1,8 +1,10 @@
 import { Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 import { DashboardClient } from "./dashboard-client";
+import { DashboardSkeleton } from "./dashboard-skeleton";
 import { PageBreadcrumbs } from "@/components/breadcrumb-context";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -250,6 +252,27 @@ async function getDashboardModules(userId: string, role: Role) {
   );
 }
 
+async function DashboardContent({
+  currentUserId,
+  currentUserOption,
+  role,
+}: {
+  currentUserId: string;
+  currentUserOption: UserPickerOption;
+  role: Role;
+}) {
+  const modules = await getDashboardModules(currentUserId, role);
+
+  return (
+    <DashboardClient
+      currentUserId={currentUserId}
+      isAdmin={role === Role.ADMIN}
+      modules={modules}
+      currentUserOption={currentUserOption}
+    />
+  );
+}
+
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
 
@@ -257,7 +280,6 @@ export default async function DashboardPage() {
     redirect("/auth/sign-in");
   }
 
-  const modules = await getDashboardModules(session.user.id, session.user.role);
   const currentUserOption: UserPickerOption = {
     id: session.user.id,
     name: session.user.name?.trim() || session.user.email?.trim() || "Current user",
@@ -267,12 +289,13 @@ export default async function DashboardPage() {
   return (
     <>
       <PageBreadcrumbs items={[{ label: "Dashboard", href: "/dashboard", current: true }]} />
-      <DashboardClient
-        currentUserId={session.user.id}
-        isAdmin={session.user.role === Role.ADMIN}
-        modules={modules}
-        currentUserOption={currentUserOption}
-      />
+      <Suspense fallback={<DashboardSkeleton />}>
+        <DashboardContent
+          currentUserId={session.user.id}
+          role={session.user.role}
+          currentUserOption={currentUserOption}
+        />
+      </Suspense>
     </>
   );
 }
