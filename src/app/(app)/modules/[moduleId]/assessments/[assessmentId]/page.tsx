@@ -14,6 +14,15 @@ type AssessmentPageProps = {
   params: Promise<{ moduleId: string; assessmentId: string }>;
 };
 
+type MarkerProgressSummary = {
+  markerId: string;
+  markerName: string;
+  allocatedScripts: number;
+  markedScripts: number;
+  remainingScripts: number;
+  progressPercentage: number;
+};
+
 function formatDateTime(date: Date | null): string {
   if (!date) {
     return "Not set";
@@ -179,6 +188,41 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         email: assessment.moderatorUser.email,
       }
     : null;
+  const markerProgress = Array.from(
+    assessment.scripts.reduce<Map<string, Omit<MarkerProgressSummary, "remainingScripts" | "progressPercentage">>>(
+      (progressByMarkerId, script) => {
+        const marker = script.allocation?.marker;
+
+        if (!marker) {
+          return progressByMarkerId;
+        }
+
+        const currentMarkerProgress = progressByMarkerId.get(marker.id) ?? {
+          markerId: marker.id,
+          markerName: getDisplayName(marker),
+          allocatedScripts: 0,
+          markedScripts: 0,
+        };
+
+        currentMarkerProgress.allocatedScripts += 1;
+
+        if (script.grade !== null) {
+          currentMarkerProgress.markedScripts += 1;
+        }
+
+        progressByMarkerId.set(marker.id, currentMarkerProgress);
+        return progressByMarkerId;
+      },
+      new Map()
+    ).values()
+  )
+    .map((marker) => ({
+      ...marker,
+      remainingScripts: marker.allocatedScripts - marker.markedScripts,
+      progressPercentage:
+        marker.allocatedScripts === 0 ? 0 : Math.round((marker.markedScripts / marker.allocatedScripts) * 100),
+    }))
+    .sort((left, right) => left.markerName.localeCompare(right.markerName));
 
   return (
     <>
@@ -206,7 +250,9 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         markingDeadlineAt={formatDateTime(assessment.markingDeadlineAt)}
         canManageAssessment={canManageAssessment}
         canSubmitModeration={canSubmitModeration}
+        canViewMarkerProgress={isAdmin || currentUserIsLeader}
         markerOptions={markerOptions}
+        markerProgress={markerProgress}
         currentModeratorOption={currentModeratorOption}
         moduleLeaderOptions={moduleMemberships.map((membership) => ({
           id: membership.user.id,

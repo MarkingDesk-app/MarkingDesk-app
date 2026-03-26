@@ -21,15 +21,6 @@ function formatDeadline(date: Date | null): string {
   }).format(date);
 }
 
-type MarkerProgressSummary = {
-  markerId: string;
-  markerName: string;
-  allocatedScripts: number;
-  markedScripts: number;
-  remainingScripts: number;
-  progressPercentage: number;
-};
-
 function summarizeModule(module: {
   id: string;
   code: string;
@@ -47,8 +38,7 @@ function summarizeModule(module: {
       myMarkedScripts: number;
     }[];
   }[];
-  markerProgress: MarkerProgressSummary[];
-}, currentUserId: string, role: Role) {
+}, currentUserId: string) {
   const allInstances = module.assessmentTemplates.flatMap((template) => template.assessmentInstances);
   const totalScripts = allInstances.reduce((sum, instance) => sum + instance.totalScripts, 0);
   const markedScripts = allInstances.reduce((sum, instance) => sum + instance.markedScripts, 0);
@@ -66,7 +56,6 @@ function summarizeModule(module: {
   const currentUserIsLeader = module.memberships.some(
     (membership) => membership.userId === currentUserId && membership.isLeader
   );
-  const canViewMarkerProgress = role === Role.ADMIN || currentUserIsLeader;
 
   return {
     id: module.id,
@@ -83,7 +72,6 @@ function summarizeModule(module: {
     currentUserIsLeader,
     currentUserIsModerator: moderatedAssessments > 0,
     moderatedAssessments,
-    markerProgress: canViewMarkerProgress ? module.markerProgress : [],
     leaderSummary:
       leaders.length === 0
         ? "Module leader not assigned"
@@ -187,32 +175,13 @@ async function getDashboardModules(userId: string, role: Role) {
   const instanceIds = modules.flatMap((module) =>
     module.assessmentTemplates.flatMap((template) => template.assessmentInstances.map((instance) => instance.id))
   );
-  const moduleIdByInstanceId = new Map(
-    modules.flatMap((module) =>
-      module.assessmentTemplates.flatMap((template) =>
-        template.assessmentInstances.map((instance) => [instance.id, module.id] as const)
-      )
-    )
-  );
 
   let markedCounts: { assessmentInstanceId: string; _count: { _all: number } }[] = [];
   let myAllocationCounts: { assessmentInstanceId: string; _count: { _all: number } }[] = [];
   let myMarkedCounts: { assessmentInstanceId: string; _count: { _all: number } }[] = [];
-  let allocationRows: {
-    markerUserId: string;
-    marker: {
-      id: string;
-      name: string | null;
-      email: string | null;
-    };
-    script: {
-      assessmentInstanceId: string;
-      grade: number | null;
-    };
-  }[] = [];
 
   if (instanceIds.length) {
-    [markedCounts, myAllocationCounts, myMarkedCounts, allocationRows] = await Promise.all([
+    [markedCounts, myAllocationCounts, myMarkedCounts] = await Promise.all([
       prisma.script.groupBy({
         by: ["assessmentInstanceId"],
         where: {
@@ -250,29 +219,6 @@ async function getDashboardModules(userId: string, role: Role) {
         },
         _count: {
           _all: true,
-        },
-      }),
-      prisma.allocation.findMany({
-        where: {
-          script: {
-            assessmentInstanceId: { in: instanceIds },
-          },
-        },
-        select: {
-          markerUserId: true,
-          marker: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-          script: {
-            select: {
-              assessmentInstanceId: true,
-              grade: true,
-            },
-          },
         },
       }),
     ]);
@@ -281,32 +227,6 @@ async function getDashboardModules(userId: string, role: Role) {
   const markedCountByInstanceId = buildCountMap(markedCounts);
   const myAllocationCountByInstanceId = buildCountMap(myAllocationCounts);
   const myMarkedCountByInstanceId = buildCountMap(myMarkedCounts);
-  const markerProgressByModuleId = new Map<string, Map<string, Omit<MarkerProgressSummary, "remainingScripts" | "progressPercentage">>>();
-
-  for (const allocation of allocationRows) {
-    const moduleId = moduleIdByInstanceId.get(allocation.script.assessmentInstanceId);
-
-    if (!moduleId) {
-      continue;
-    }
-
-    const currentModuleProgress = markerProgressByModuleId.get(moduleId) ?? new Map();
-    const currentMarkerProgress = currentModuleProgress.get(allocation.markerUserId) ?? {
-      markerId: allocation.markerUserId,
-      markerName: getDisplayName(allocation.marker),
-      allocatedScripts: 0,
-      markedScripts: 0,
-    };
-
-    currentMarkerProgress.allocatedScripts += 1;
-
-    if (allocation.script.grade !== null) {
-      currentMarkerProgress.markedScripts += 1;
-    }
-
-    currentModuleProgress.set(allocation.markerUserId, currentMarkerProgress);
-    markerProgressByModuleId.set(moduleId, currentModuleProgress);
-  }
 
   return modules.map((module) =>
     summarizeModule(
@@ -324,17 +244,8 @@ async function getDashboardModules(userId: string, role: Role) {
             myMarkedScripts: myMarkedCountByInstanceId.get(instance.id) ?? 0,
           })),
         })),
-        markerProgress: Array.from(markerProgressByModuleId.get(module.id)?.values() ?? [])
-          .map((marker) => ({
-            ...marker,
-            remainingScripts: marker.allocatedScripts - marker.markedScripts,
-            progressPercentage:
-              marker.allocatedScripts === 0 ? 0 : Math.round((marker.markedScripts / marker.allocatedScripts) * 100),
-          }))
-          .sort((left, right) => left.markerName.localeCompare(right.markerName)),
       },
-      userId,
-      role
+      userId
     )
   );
 }

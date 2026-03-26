@@ -1,7 +1,7 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState, useTransition } from "react";
-import { ArrowRight, Clock3, Plus, Rows3, Search, ShieldCheck, UsersRound, X } from "lucide-react";
+import { Clock3, Plus, Rows3, Search, ShieldCheck, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -12,15 +12,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PendingNotice } from "@/components/ui/loading-state";
 import { ModalShell } from "@/components/ui/modal-shell";
 import type { UserPickerOption } from "@/components/ui/user-picker";
-
-type MarkerProgressSummary = {
-  markerId: string;
-  markerName: string;
-  allocatedScripts: number;
-  markedScripts: number;
-  remainingScripts: number;
-  progressPercentage: number;
-};
 
 type ModuleSummary = {
   id: string;
@@ -38,7 +29,6 @@ type ModuleSummary = {
   currentUserIsLeader: boolean;
   currentUserIsModerator: boolean;
   moderatedAssessments: number;
-  markerProgress: MarkerProgressSummary[];
 };
 
 type DashboardClientProps = {
@@ -80,7 +70,6 @@ export function DashboardClient({ currentUserId, isAdmin, modules, currentUserOp
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [showCreateModuleModal, setShowCreateModuleModal] = useState(false);
-  const [markerProgressModalModule, setMarkerProgressModalModule] = useState<ModuleSummary | null>(null);
   const [moduleCode, setModuleCode] = useState("");
   const [moduleTitle, setModuleTitle] = useState("");
   const [moduleSearchQuery, setModuleSearchQuery] = useState("");
@@ -219,12 +208,11 @@ export function DashboardClient({ currentUserId, isAdmin, modules, currentUserOp
                 module.myMarkedScripts,
                 module.myAllocatedScripts
               );
-              const canViewMarkerProgress = isAdmin || module.currentUserIsLeader;
-              const hasMarkerProgress = module.markerProgress.length > 0;
 
               return (
-                <article
+                <Link
                   key={module.id}
+                  href={`/modules/${module.id}`}
                   className="group rounded-[24px] border border-white/70 bg-white/85 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-200"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -304,40 +292,11 @@ export function DashboardClient({ currentUserId, isAdmin, modules, currentUserOp
                       </p>
                       <div className="mt-2 flex items-start gap-3 text-sm text-slate-600">
                         <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-sky-600 2xl:hidden" />
-                        <div className="min-w-0 space-y-1 text-sm leading-snug text-slate-600">
-                          <p className="break-words">{module.nextDeadline}</p>
-                          <p className="break-words">{module.assessments} assessments</p>
-                        </div>
+                        <p className="min-w-0 break-words text-sm leading-snug text-slate-600">{module.nextDeadline}</p>
                       </div>
                     </div>
                   </div>
-
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 pt-4">
-                    <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-                      {module.assessments} assessment{module.assessments === 1 ? "" : "s"}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {canViewMarkerProgress ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => setMarkerProgressModalModule(module)}
-                          disabled={!hasMarkerProgress}
-                        >
-                          <UsersRound className="h-4 w-4" />
-                          {hasMarkerProgress ? "Marker progress" : "No marker allocations yet"}
-                        </Button>
-                      ) : null}
-                      <Button size="sm" variant="secondary" asChild>
-                        <Link href={`/modules/${module.id}`}>
-                          Open module
-                          <ArrowRight className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </div>
-                  </div>
-                </article>
+                </Link>
               );
             })}
           </div>
@@ -440,50 +399,6 @@ export function DashboardClient({ currentUserId, isAdmin, modules, currentUserOp
             </Button>
           </div>
         </div>
-      </ModalShell>
-
-      <ModalShell
-        open={Boolean(markerProgressModalModule)}
-        onClose={() => setMarkerProgressModalModule(null)}
-        title={
-          markerProgressModalModule
-            ? `${markerProgressModalModule.code} marker progress`
-            : "Marker progress"
-        }
-        description="Allocated scripts only. Progress is based on saved marks."
-        widthClassName="max-w-xl"
-      >
-        {markerProgressModalModule?.markerProgress.length ? (
-          <div className="space-y-3">
-            {markerProgressModalModule.markerProgress.map((marker) => (
-              <div
-                key={marker.markerId}
-                className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-950">{marker.markerName}</p>
-                    <p className="text-sm text-slate-500">
-                      {marker.markedScripts}/{marker.allocatedScripts} marked
-                    </p>
-                  </div>
-                  <p className="text-sm font-semibold text-slate-700">{marker.progressPercentage}%</p>
-                </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200/80">
-                  <div
-                    className="h-full rounded-full bg-sky-600 transition-[width]"
-                    style={{ width: `${marker.progressPercentage}%` }}
-                  />
-                </div>
-                <p className="mt-2 text-sm text-slate-500">{marker.remainingScripts} remaining</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
-            No allocated markers to show yet.
-          </p>
-        )}
       </ModalShell>
     </div>
   );

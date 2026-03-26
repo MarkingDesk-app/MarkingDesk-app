@@ -67,6 +67,15 @@ type ModerationSummary = {
   hasCompletedModeration: boolean;
 };
 
+type MarkerProgressSummary = {
+  markerId: string;
+  markerName: string;
+  allocatedScripts: number;
+  markedScripts: number;
+  remainingScripts: number;
+  progressPercentage: number;
+};
+
 type AssessmentWorkspaceClientProps = {
   moduleId: string;
   assessmentId: string;
@@ -79,7 +88,9 @@ type AssessmentWorkspaceClientProps = {
   markingDeadlineAt: string;
   canManageAssessment: boolean;
   canSubmitModeration: boolean;
+  canViewMarkerProgress: boolean;
   markerOptions: UserPickerOption[];
+  markerProgress: MarkerProgressSummary[];
   currentModeratorOption: UserPickerOption | null;
   moduleLeaderOptions: UserPickerOption[];
   dueAtInput: string;
@@ -199,7 +210,9 @@ export function AssessmentWorkspaceClient({
   markingDeadlineAt,
   canManageAssessment,
   canSubmitModeration,
+  canViewMarkerProgress,
   markerOptions,
+  markerProgress,
   currentModeratorOption,
   moduleLeaderOptions,
   dueAtInput,
@@ -223,6 +236,7 @@ export function AssessmentWorkspaceClient({
   const [showOpenMyAllocationModal, setShowOpenMyAllocationModal] = useState(false);
   const [showEditAssessmentModal, setShowEditAssessmentModal] = useState(false);
   const [showAssignAllocationsModal, setShowAssignAllocationsModal] = useState(false);
+  const [showMarkerProgressModal, setShowMarkerProgressModal] = useState(false);
   const [showModerationModal, setShowModerationModal] = useState(false);
   const [allocationDraft, setAllocationDraft] = useState<AllocationDraft>(null);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(null);
@@ -748,7 +762,21 @@ export function AssessmentWorkspaceClient({
                 style={{ width: `${progressPercentage}%` }}
               />
             </div>
-            <p className="text-sm text-slate-600">{remainingScripts} submissions still need grades.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-slate-600">{remainingScripts} submissions still need grades.</p>
+              {canViewMarkerProgress ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShowMarkerProgressModal(true)}
+                  disabled={markerProgress.length === 0}
+                >
+                  <UsersRound className="h-4 w-4" />
+                  {markerProgress.length > 0 ? "Marker progress" : "No marker allocations yet"}
+                </Button>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
 
@@ -779,6 +807,43 @@ export function AssessmentWorkspaceClient({
           </CardContent>
         </Card>
       </section>
+
+      <ModalShell
+        open={showMarkerProgressModal}
+        onClose={() => setShowMarkerProgressModal(false)}
+        title="Marker progress"
+        description="Allocated scripts only. Progress is based on saved marks."
+        widthClassName="max-w-xl"
+      >
+        {markerProgress.length > 0 ? (
+          <div className="space-y-3">
+            {markerProgress.map((marker) => (
+              <div key={marker.markerId} className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">{marker.markerName}</p>
+                    <p className="text-sm text-slate-500">
+                      {marker.markedScripts}/{marker.allocatedScripts} marked
+                    </p>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700">{marker.progressPercentage}%</p>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200/80">
+                  <div
+                    className="h-full rounded-full bg-sky-600 transition-[width]"
+                    style={{ width: `${marker.progressPercentage}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-sm text-slate-500">{marker.remainingScripts} remaining</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-5 text-sm text-slate-500">
+            No allocated markers to show yet.
+          </p>
+        )}
+      </ModalShell>
 
       <Card className="overflow-hidden">
         <CardHeader className="flex flex-col gap-4 border-b border-slate-200/80 lg:flex-row lg:items-start lg:justify-between">
