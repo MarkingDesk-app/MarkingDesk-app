@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -122,6 +122,8 @@ type GradeFilter = "all" | "graded" | "ungraded";
 type FlagFilter = "all" | "needs_attention" | "resolved" | "unflagged";
 type SortOption = "script_asc" | "script_desc" | "marker_asc" | "submission_type" | "flag_status";
 
+const SCRIPT_PAGE_SIZE = 100;
+
 function formatGradeValue(grade: number | null): string {
   if (grade === null) {
     return "";
@@ -167,6 +169,10 @@ function moderationStatusFromLabel(statusLabel: string): ModerationStatus {
 
 function compareNullableText(left: string | null, right: string | null): number {
   return (left ?? "").localeCompare(right ?? "");
+}
+
+function buildGradeInputMap(scripts: ScriptRow[]): Record<string, string> {
+  return Object.fromEntries(scripts.map((script) => [script.id, formatGradeValue(script.grade)]));
 }
 
 function buildDefaultAllocationCounts(markerOptions: UserPickerOption[], totalScriptCount: number): Record<string, string> {
@@ -227,9 +233,7 @@ export function AssessmentWorkspaceClient({
   const scripts = initialScripts;
   const moderation = initialModeration;
   const [selectedScriptIds, setSelectedScriptIds] = useState<string[]>([]);
-  const [gradeInputs, setGradeInputs] = useState<Record<string, string>>(
-    Object.fromEntries(initialScripts.map((script) => [script.id, formatGradeValue(script.grade)]))
-  );
+  const [gradeInputs, setGradeInputs] = useState<Record<string, string>>(() => buildGradeInputMap(initialScripts));
   const [toast, setToast] = useState<ToastState>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showOpenAllModal, setShowOpenAllModal] = useState(false);
@@ -260,10 +264,14 @@ export function AssessmentWorkspaceClient({
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>("all");
   const [flagFilter, setFlagFilter] = useState<FlagFilter>("all");
   const [sortOption, setSortOption] = useState<SortOption>("script_asc");
+  const [currentPage, setCurrentPage] = useState(1);
   const [reviewStatus, setReviewStatus] = useState<ReviewFlagStatus>(ReviewFlagStatus.FLAGGED);
   const [reviewReason, setReviewReason] = useState("");
   const [reviewOutcomeNotes, setReviewOutcomeNotes] = useState("");
   const [reviewNotifyLeaderUserIds, setReviewNotifyLeaderUserIds] = useState<string[]>([]);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedDeferredSearchQuery = deferredSearchQuery.trim().toLowerCase();
+  const isSearchPending = deferredSearchQuery !== searchQuery;
 
   useEffect(() => {
     if (!toast) {
@@ -277,19 +285,50 @@ export function AssessmentWorkspaceClient({
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  const myAllocatedScripts = useMemo(
-    () => scripts.filter((script) => script.assignedToCurrentUser),
-    [scripts]
+  useEffect(() => {
+    setGradeInputs(buildGradeInputMap(initialScripts));
+    setSelectedScriptIds((current) => current.filter((scriptId) => initialScripts.some((script) => script.id === scriptId)));
+  }, [initialScripts]);
+
+  useEffect(() => {
+    setSettingsDueAt(dueAtInput);
+  }, [dueAtInput]);
+
+  useEffect(() => {
+    setSettingsMarkingDeadlineAt(markingDeadlineAtInput);
+  }, [markingDeadlineAtInput]);
+
+  useEffect(() => {
+    setSettingsModeratorUserId(currentModeratorUserId);
+  }, [currentModeratorUserId]);
+
+  useEffect(() => {
+    setSettingsMarkerUserIds(currentMarkerUserIds);
+  }, [currentMarkerUserIds]);
+
+  useEffect(() => {
+    setModerationStatus(moderationStatusFromLabel(initialModeration.statusLabel));
+  }, [initialModeration.statusLabel]);
+
+  useEffect(() => {
+    setModerationReport(initialModeration.report ?? "");
+  }, [initialModeration.report]);
+
+  const scriptsById = useMemo(() => new Map(scripts.map((script) => [script.id, script])), [scripts]);
+  const scriptIdSet = useMemo(() => new Set(scripts.map((script) => script.id)), [scripts]);
+  const myAllocatedScripts = useMemo(() => scripts.filter((script) => script.assignedToCurrentUser), [scripts]);
+  const myAllocatedScriptIdSet = useMemo(
+    () => new Set(myAllocatedScripts.map((script) => script.id)),
+    [myAllocatedScripts]
   );
   const filteredScripts = useMemo(() => {
     const baseScripts = viewMode === "my_allocation" ? myAllocatedScripts : scripts;
-    const normalizedQuery = searchQuery.trim().toLowerCase();
 
     const nextScripts = baseScripts.filter((script) => {
       const matchesSearch =
-        normalizedQuery.length === 0 ||
-        script.turnitinId.toLowerCase().includes(normalizedQuery) ||
-        (script.markerName ?? "").toLowerCase().includes(normalizedQuery);
+        normalizedDeferredSearchQuery.length === 0 ||
+        script.turnitinId.toLowerCase().includes(normalizedDeferredSearchQuery) ||
+        (script.markerName ?? "").toLowerCase().includes(normalizedDeferredSearchQuery);
 
       const matchesMarker = !markerFilterUserId || script.markerUserId === markerFilterUserId;
       const matchesSubmissionType = !submissionTypeFilter || script.submissionType === submissionTypeFilter;
@@ -336,21 +375,54 @@ export function AssessmentWorkspaceClient({
     gradeInputs,
     markerFilterUserId,
     myAllocatedScripts,
+    normalizedDeferredSearchQuery,
     scripts,
-    searchQuery,
     sortOption,
     submissionTypeFilter,
     viewMode,
   ]);
-  const visibleScripts = filteredScripts;
-  const activeSelectedScriptIds = selectedScriptIds.filter((id) => scripts.some((script) => script.id === id));
-  const visibleSelectedScriptIds = activeSelectedScriptIds.filter((id) =>
-    visibleScripts.some((script) => script.id === id)
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [viewMode, normalizedDeferredSearchQuery, markerFilterUserId, submissionTypeFilter, gradeFilter, flagFilter, sortOption]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredScripts.length / SCRIPT_PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  const visibleScripts = useMemo(() => {
+    const startIndex = (currentPage - 1) * SCRIPT_PAGE_SIZE;
+    return filteredScripts.slice(startIndex, startIndex + SCRIPT_PAGE_SIZE);
+  }, [currentPage, filteredScripts]);
+
+  const visibleRangeStart = filteredScripts.length === 0 ? 0 : (currentPage - 1) * SCRIPT_PAGE_SIZE + 1;
+  const visibleRangeEnd = visibleRangeStart === 0 ? 0 : visibleRangeStart + visibleScripts.length - 1;
+  const filteredScriptIdSet = useMemo(() => new Set(filteredScripts.map((script) => script.id)), [filteredScripts]);
+  const visibleScriptIdSet = useMemo(() => new Set(visibleScripts.map((script) => script.id)), [visibleScripts]);
+  const activeSelectedScriptIds = useMemo(
+    () => selectedScriptIds.filter((id) => scriptIdSet.has(id)),
+    [scriptIdSet, selectedScriptIds]
+  );
+  const filteredSelectedScriptIds = useMemo(
+    () => activeSelectedScriptIds.filter((id) => filteredScriptIdSet.has(id)),
+    [activeSelectedScriptIds, filteredScriptIdSet]
+  );
+  const visibleSelectedScriptIds = useMemo(
+    () => activeSelectedScriptIds.filter((id) => visibleScriptIdSet.has(id)),
+    [activeSelectedScriptIds, visibleScriptIdSet]
   );
   const totalScriptCount = scripts.length;
-  const markedScriptCount = scripts.filter((script) => isScriptMarked(script, gradeInputs)).length;
+  const markedScriptCount = useMemo(
+    () => scripts.filter((script) => isScriptMarked(script, gradeInputs)).length,
+    [gradeInputs, scripts]
+  );
   const myAllocatedScriptCount = myAllocatedScripts.length;
-  const myMarkedScriptCount = myAllocatedScripts.filter((script) => isScriptMarked(script, gradeInputs)).length;
+  const myMarkedScriptCount = useMemo(
+    () => myAllocatedScripts.filter((script) => isScriptMarked(script, gradeInputs)).length,
+    [gradeInputs, myAllocatedScripts]
+  );
   const allSelected = visibleScripts.length > 0 && visibleSelectedScriptIds.length === visibleScripts.length;
   const remainingScripts = totalScriptCount - markedScriptCount;
   const myRemainingScripts = myAllocatedScriptCount - myMarkedScriptCount;
@@ -380,7 +452,7 @@ export function AssessmentWorkspaceClient({
   );
   const canImport =
     extractedIds.length > 0 && duplicateIdsInPaste.length === 0 && existingDuplicateIds.length === 0 && !isPending;
-  const activeReviewScript = reviewDraft ? scripts.find((script) => script.id === reviewDraft.scriptId) ?? null : null;
+  const activeReviewScript = reviewDraft ? scriptsById.get(reviewDraft.scriptId) ?? null : null;
 
   const showToast = (tone: "success" | "error", message: string) => {
     setToast({ tone, message });
@@ -423,8 +495,7 @@ export function AssessmentWorkspaceClient({
       return;
     }
 
-    const myAllocationIds = new Set(myAllocatedScripts.map((script) => script.id));
-    setSelectedScriptIds((current) => current.filter((id) => myAllocationIds.has(id)));
+    setSelectedScriptIds((current) => current.filter((id) => myAllocatedScriptIdSet.has(id)));
   };
 
   const rewriteImportTextWithIds = (ids: string[]) => {
@@ -452,7 +523,7 @@ export function AssessmentWorkspaceClient({
   const toggleSelectAll = () => {
     setSelectedScriptIds(
       allSelected
-        ? activeSelectedScriptIds.filter((id) => !visibleScripts.some((script) => script.id === id))
+        ? activeSelectedScriptIds.filter((id) => !visibleScriptIdSet.has(id))
         : Array.from(new Set([...activeSelectedScriptIds, ...visibleScripts.map((script) => script.id)]))
     );
   };
@@ -464,7 +535,9 @@ export function AssessmentWorkspaceClient({
   };
 
   const openScriptsInTabs = (scriptIds: string[]) => {
-    const selectedScripts = scripts.filter((script) => scriptIds.includes(script.id));
+    const selectedScripts = scriptIds
+      .map((scriptId) => scriptsById.get(scriptId))
+      .filter((script): script is ScriptRow => Boolean(script));
 
     for (const script of selectedScripts) {
       window.open(buildTurnitinSubmissionUrl(script.turnitinId), "_blank", "noopener,noreferrer");
@@ -472,7 +545,7 @@ export function AssessmentWorkspaceClient({
   };
 
   const handleGradeBlur = (scriptId: string) => {
-    const script = scripts.find((currentScript) => currentScript.id === scriptId);
+    const script = scriptsById.get(scriptId);
 
     if (!script) {
       return;
@@ -874,9 +947,9 @@ export function AssessmentWorkspaceClient({
                 View My Allocation
               </button>
             </div>
-            {visibleSelectedScriptIds.length > 0 ? (
-              <Button variant="secondary" onClick={() => openScriptsInTabs(visibleSelectedScriptIds)}>
-                Open selected ({visibleSelectedScriptIds.length})
+            {filteredSelectedScriptIds.length > 0 ? (
+              <Button variant="secondary" onClick={() => openScriptsInTabs(filteredSelectedScriptIds)}>
+                Open selected ({filteredSelectedScriptIds.length})
               </Button>
             ) : null}
             {scripts.length > 0 ? (
@@ -942,9 +1015,23 @@ export function AssessmentWorkspaceClient({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">
-              {visibleScripts.length} of {viewMode === "my_allocation" ? myAllocatedScripts.length : scripts.length} scripts shown
-            </p>
+            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+              <p>
+                {filteredScripts.length} of {viewMode === "my_allocation" ? myAllocatedScripts.length : scripts.length}{" "}
+                scripts match this view
+              </p>
+              {filteredScripts.length > 0 ? (
+                <p>
+                  Showing {visibleRangeStart}-{visibleRangeEnd}
+                </p>
+              ) : null}
+              {isSearchPending ? (
+                <span className="inline-flex items-center gap-2 text-slate-400">
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  Updating list
+                </span>
+              ) : null}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={sortOption}
@@ -975,7 +1062,7 @@ export function AssessmentWorkspaceClient({
             </div>
           </div>
 
-          {visibleScripts.length === 0 ? (
+          {filteredScripts.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 px-6 py-12 text-center text-sm text-slate-500">
               {searchQuery || markerFilterUserId || submissionTypeFilter || gradeFilter !== "all" || flagFilter !== "all"
                 ? "No scripts match the current filters."
@@ -990,107 +1077,136 @@ export function AssessmentWorkspaceClient({
                   )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-separate border-spacing-0">
-                <thead>
-                  <tr className="bg-slate-50/80 text-left text-xs uppercase tracking-[0.2em] text-slate-500">
-                    <th className="px-4 py-3">
-                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
-                    </th>
-                    <th className="px-4 py-3">Script ID</th>
-                    <th className="px-4 py-3">Marker</th>
-                    <th className="px-4 py-3">Submission Type</th>
-                    <th className="px-4 py-3">Grade</th>
-                    <th className="px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleScripts.map((script) => (
-                    <tr key={script.id} className="border-t border-slate-200/80 text-sm text-slate-700">
-                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
-                        <input
-                          type="checkbox"
-                          checked={activeSelectedScriptIds.includes(script.id)}
-                          onChange={() => toggleScriptSelection(script.id)}
-                        />
-                      </td>
-                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle font-medium text-slate-950">
-                        {script.turnitinId}
-                      </td>
-                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span className="text-slate-600">{script.markerName ?? "Unassigned"}</span>
-                          {canManageAssessment ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openAllocationModal(script)}
-                            >
-                              {script.markerUserId ? "Change" : "Assign"}
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
-                        {formatSubmissionType(script.submissionType)}
-                      </td>
-                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
-                        {script.canMark ? (
-                          <input
-                            value={gradeInputs[script.id] ?? ""}
-                            onChange={(event) =>
-                              setGradeInputs((current) => ({
-                                ...current,
-                                [script.id]: event.target.value,
-                              }))
-                            }
-                            onBlur={() => handleGradeBlur(script.id)}
-                            inputMode="decimal"
-                            className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-sky-500 focus:ring-2"
-                            placeholder="Grade"
-                          />
-                        ) : (
-                          <span className="text-slate-500">{formatGradeValue(script.grade) || "—"}</span>
-                        )}
-                      </td>
-                      <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => openReviewModal(script)}
-                            disabled={isArchived}
-                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${getReviewFlagClasses(script.reviewFlag?.status)}`}
-                            title={
-                              isArchived
-                                ? "Archived assessments are read-only"
-                                : script.reviewFlag
-                                  ? formatReviewFlagStatus(script.reviewFlag.status)
-                                  : "Flag for review"
-                            }
-                          >
-                            {script.reviewFlag?.status === ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW ? (
-                              <AlertTriangle className="h-4 w-4" />
-                            ) : (
-                              <Flag className="h-4 w-4" />
-                            )}
-                          </button>
-                          <a
-                            href={buildTurnitinSubmissionUrl(script.turnitinId)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-sky-200 hover:text-sky-700"
-                            title="Open script"
-                          >
-                            <ArrowUpRight className="h-4 w-4" />
-                          </a>
-                        </div>
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-0">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-left text-xs uppercase tracking-[0.2em] text-slate-500">
+                      <th className="px-4 py-3">
+                        <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+                      </th>
+                      <th className="px-4 py-3">Script ID</th>
+                      <th className="px-4 py-3">Marker</th>
+                      <th className="px-4 py-3">Submission Type</th>
+                      <th className="px-4 py-3">Grade</th>
+                      <th className="px-4 py-3">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {visibleScripts.map((script) => (
+                      <tr key={script.id} className="border-t border-slate-200/80 text-sm text-slate-700">
+                        <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                          <input
+                            type="checkbox"
+                            checked={activeSelectedScriptIds.includes(script.id)}
+                            onChange={() => toggleScriptSelection(script.id)}
+                          />
+                        </td>
+                        <td className="border-t border-slate-200/80 px-4 py-3 align-middle font-medium text-slate-950">
+                          {script.turnitinId}
+                        </td>
+                        <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="text-slate-600">{script.markerName ?? "Unassigned"}</span>
+                            {canManageAssessment ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openAllocationModal(script)}
+                              >
+                                {script.markerUserId ? "Change" : "Assign"}
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                          {formatSubmissionType(script.submissionType)}
+                        </td>
+                        <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                          {script.canMark ? (
+                            <input
+                              value={gradeInputs[script.id] ?? ""}
+                              onChange={(event) =>
+                                setGradeInputs((current) => ({
+                                  ...current,
+                                  [script.id]: event.target.value,
+                                }))
+                              }
+                              onBlur={() => handleGradeBlur(script.id)}
+                              inputMode="decimal"
+                              className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-sky-500 focus:ring-2"
+                              placeholder="Grade"
+                            />
+                          ) : (
+                            <span className="text-slate-500">{formatGradeValue(script.grade) || "—"}</span>
+                          )}
+                        </td>
+                        <td className="border-t border-slate-200/80 px-4 py-3 align-middle">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => openReviewModal(script)}
+                              disabled={isArchived}
+                              className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${getReviewFlagClasses(script.reviewFlag?.status)}`}
+                              title={
+                                isArchived
+                                  ? "Archived assessments are read-only"
+                                  : script.reviewFlag
+                                    ? formatReviewFlagStatus(script.reviewFlag.status)
+                                    : "Flag for review"
+                              }
+                            >
+                              {script.reviewFlag?.status === ReviewFlagStatus.ACADEMIC_CONDUCT_REVIEW ? (
+                                <AlertTriangle className="h-4 w-4" />
+                              ) : (
+                                <Flag className="h-4 w-4" />
+                              )}
+                            </button>
+                            <a
+                              href={buildTurnitinSubmissionUrl(script.turnitinId)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-sky-200 hover:text-sky-700"
+                              title="Open script"
+                            >
+                              <ArrowUpRight className="h-4 w-4" />
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {filteredScripts.length > SCRIPT_PAGE_SIZE ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 pt-4">
+                  <p className="text-sm text-slate-500">
+                    Page {currentPage} of {totalPages}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </>
           )}
         </CardContent>
       </Card>

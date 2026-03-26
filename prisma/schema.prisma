@@ -120,6 +120,7 @@ model AssessmentInstance {
 
   @@unique([assessmentTemplateId, academicYear])
   @@index([academicYear])
+  @@index([moderatorUserId, dueAt, markingDeadlineAt])
 }
 
 model Script {

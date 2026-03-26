@@ -207,16 +207,6 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
           },
         },
       },
-      scripts: {
-        select: {
-          grade: true,
-          allocation: {
-            select: {
-              markerUserId: true,
-            },
-          },
-        },
-      },
     },
   });
 

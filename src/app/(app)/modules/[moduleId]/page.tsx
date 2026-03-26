@@ -13,6 +13,14 @@ type ModulePageProps = {
   params: Promise<{ moduleId: string }>;
 };
 
+const userSummarySelect = {
+  id: true,
+  name: true,
+  email: true,
+  passwordHash: true,
+  emailVerified: true,
+} as const;
+
 function buildMarkedCountMap(rows: { assessmentInstanceId: string; _count: { _all: number } }[]) {
   return new Map(rows.map((row) => [row.assessmentInstanceId, row._count._all]));
 }
@@ -40,10 +48,114 @@ export default async function ModulePage({ params }: ModulePageProps) {
 
   const moduleRecord = await prisma.module.findUnique({
     where: { id: moduleId },
+    select: {
+      id: true,
+      code: true,
+      title: true,
+    },
+  });
+
+  if (!moduleRecord) {
+    notFound();
+  }
+
+  const moduleLeaders = await prisma.moduleMembership.findMany({
+    where: {
+      moduleId,
+      active: true,
+      isLeader: true,
+    },
     include: {
-      assessmentTemplates: {
+      user: {
+        select: userSummarySelect,
+      },
+    },
+    orderBy: [{ user: { name: "asc" } }, { user: { email: "asc" } }],
+  });
+
+  const currentUserIsLeader = moduleLeaders.some((membership) => membership.userId === session.user.id);
+  const canManageModule = session.user.role === Role.ADMIN || currentUserIsLeader;
+  const accessibleInstanceWhere = {
+    OR: [
+      {
+        moderatorUserId: session.user.id,
+      },
+      {
+        markerAssignments: {
+          some: {
+            userId: session.user.id,
+            active: true,
+          },
+        },
+      },
+    ],
+  };
+
+  const assessmentTemplates = await prisma.assessmentTemplate.findMany({
+    where: canManageModule
+      ? {
+          moduleId,
+          isArchived: false,
+        }
+      : {
+          moduleId,
+          isArchived: false,
+          assessmentInstances: {
+            some: accessibleInstanceWhere,
+          },
+        },
+    orderBy: { name: "asc" },
+    include: {
+      assessmentInstances: {
+        ...(canManageModule ? {} : { where: accessibleInstanceWhere }),
+        orderBy: { academicYear: "desc" },
+        include: {
+          markerAssignments: {
+            where: {
+              active: true,
+            },
+            include: {
+              user: {
+                select: userSummarySelect,
+              },
+            },
+          },
+          moderatorUser: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          _count: {
+            select: {
+              scripts: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!canManageModule && assessmentTemplates.length === 0) {
+    notFound();
+  }
+
+  const archivedAssessmentTemplates = canManageModule
+    ? await prisma.assessmentTemplate.findMany({
+        where: {
+          moduleId,
+          isArchived: true,
+        },
         orderBy: { name: "asc" },
         include: {
+          archivedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
           assessmentInstances: {
             orderBy: { academicYear: "desc" },
             include: {
@@ -53,13 +165,7 @@ export default async function ModulePage({ params }: ModulePageProps) {
                 },
                 include: {
                   user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      passwordHash: true,
-                      emailVerified: true,
-                    },
+                    select: userSummarySelect,
                   },
                 },
               },
@@ -77,58 +183,11 @@ export default async function ModulePage({ params }: ModulePageProps) {
               },
             },
           },
-          archivedBy: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
         },
-      },
-      memberships: {
-        where: {
-          active: true,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              passwordHash: true,
-              emailVerified: true,
-            },
-          },
-        },
-        orderBy: [{ isLeader: "desc" }, { user: { name: "asc" } }],
-      },
-    },
-  });
+      })
+    : [];
 
-  if (!moduleRecord) {
-    notFound();
-  }
-
-  const currentUserMemberships = moduleRecord.memberships.filter((membership) => membership.userId === session.user.id);
-  const currentUserIsLeader = currentUserMemberships.some((membership) => membership.isLeader);
-  const hasAssessmentAccess = moduleRecord.assessmentTemplates.some(
-    (template) =>
-      !template.isArchived &&
-      template.assessmentInstances.some(
-        (instance) =>
-          instance.moderatorUser?.id === session.user.id ||
-          instance.markerAssignments.some((assignment) => assignment.userId === session.user.id)
-      )
-  );
-  const isAllowed = session.user.role === Role.ADMIN || currentUserIsLeader || hasAssessmentAccess;
-  const canManageModule = session.user.role === Role.ADMIN || currentUserIsLeader;
-
-  if (!isAllowed) {
-    notFound();
-  }
-
-  const allInstanceIds = moduleRecord.assessmentTemplates.flatMap((template) =>
+  const allInstanceIds = [...assessmentTemplates, ...archivedAssessmentTemplates].flatMap((template) =>
     template.assessmentInstances.map((instance) => instance.id)
   );
   const markedScriptCounts = allInstanceIds.length
@@ -145,24 +204,6 @@ export default async function ModulePage({ params }: ModulePageProps) {
     : [];
   const markedScriptCountByInstanceId = buildMarkedCountMap(markedScriptCounts);
 
-  const activeAssessmentTemplates = moduleRecord.assessmentTemplates
-    .filter((template) => !template.isArchived)
-    .map((template) => ({
-      ...template,
-      assessmentInstances: canManageModule
-        ? template.assessmentInstances
-        : template.assessmentInstances.filter(
-            (instance) =>
-              instance.moderatorUser?.id === session.user.id ||
-              instance.markerAssignments.some((assignment) => assignment.userId === session.user.id)
-          ),
-    }))
-    .filter((template) => canManageModule || template.assessmentInstances.length > 0);
-
-  const archivedAssessmentTemplates = canManageModule
-    ? moduleRecord.assessmentTemplates.filter((template) => template.isArchived)
-    : [];
-
   return (
     <>
       <PageBreadcrumbs
@@ -177,9 +218,7 @@ export default async function ModulePage({ params }: ModulePageProps) {
         moduleTitle={moduleRecord.title}
         canManageModule={canManageModule}
         currentUserIsLeader={currentUserIsLeader}
-        moduleLeaders={moduleRecord.memberships
-          .filter((membership) => membership.isLeader)
-          .map((membership) => ({
+        moduleLeaders={moduleLeaders.map((membership) => ({
             id: membership.id,
             userId: membership.user.id,
             displayName: getDisplayName(membership.user),
@@ -189,7 +228,7 @@ export default async function ModulePage({ params }: ModulePageProps) {
                 ? undefined
                 : "Invitation pending",
           }))}
-        assessments={activeAssessmentTemplates.map((template) => ({
+        assessments={assessmentTemplates.map((template) => ({
           id: template.id,
           name: template.name,
           instances: template.assessmentInstances.map((instance) => ({

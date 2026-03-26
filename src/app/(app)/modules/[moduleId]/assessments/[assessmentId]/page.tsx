@@ -167,9 +167,6 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
   const isModuleLeader = isAdmin || currentUserIsLeader;
   const canManageAssessment = !isArchived && (isAdmin || isModuleLeader);
   const canSubmitModeration = !isArchived && assessment.moderatorUserId === session.user.id;
-  const workspaceVersion = assessment.scripts
-    .map((script) => `${script.id}:${script.version}:${script.allocation?.markerUserId ?? ""}`)
-    .join("|");
   const markerOptions = assessment.markerAssignments
     .map((membership) => ({
       id: membership.user.id,
@@ -238,7 +235,6 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         ]}
       />
       <AssessmentWorkspaceClient
-        key={`${assessment.id}:${workspaceVersion}:${assessment.moderationStatus ?? "pending"}:${assessment.moderationCompletedAt?.getTime() ?? 0}:${assessment.dueAt.getTime()}:${assessment.markingDeadlineAt.getTime()}:${assessment.moderatorUserId ?? ""}:${assessment.assessmentTemplate.isArchived ? "archived" : "active"}:${assessment.assessmentTemplate.archivedAt?.getTime() ?? 0}`}
         moduleId={moduleId}
         assessmentId={assessmentId}
         moduleCode={assessment.assessmentTemplate.module.code}
