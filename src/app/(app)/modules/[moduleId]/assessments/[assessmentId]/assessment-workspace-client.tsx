@@ -1573,8 +1573,16 @@ export function AssessmentWorkspaceClient({
         widthClassName="max-w-lg"
       >
         <div className="space-y-5">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            This action is about to open {scripts.length} tabs. Are you sure you wish to continue?
+          <div className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <p>
+              Note: You must first <span className="font-semibold italic">manually</span> open one script directly within
+              the Turnitin hand-in box, otherwise bulk opening here will fail.
+            </p>
+            <p>
+              If you are unable to open multiple URLs, please check your browser settings. Most modern browsers have a
+              built-in pop-up blocker that may prevent multiple tabs from opening at once. You can usually find this
+              setting in the browser&apos;s privacy or security settings.
+            </p>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowOpenAllModal(false)}>
@@ -1600,9 +1608,16 @@ export function AssessmentWorkspaceClient({
         widthClassName="max-w-lg"
       >
         <div className="space-y-5">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            This action is about to open {myAllocatedScripts.length} tabs from your allocation. Are you sure you wish to
-            continue?
+          <div className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <p>
+              Note: You must first <span className="font-semibold italic">manually</span> open one script directly within
+              the Turnitin hand-in box, otherwise bulk opening here will fail.
+            </p>
+            <p>
+              If you are unable to open multiple URLs, please check your browser settings. Most modern browsers have a
+              built-in pop-up blocker that may prevent multiple tabs from opening at once. You can usually find this
+              setting in the browser&apos;s privacy or security settings.
+            </p>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowOpenMyAllocationModal(false)}>
