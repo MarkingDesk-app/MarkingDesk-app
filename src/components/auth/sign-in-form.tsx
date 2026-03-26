@@ -14,6 +14,9 @@ function getReadableError(error: string): string {
   if (normalized.includes("invalid email or password") || normalized.includes("credentialssignin")) {
     return "Invalid email or password.";
   }
+  if (normalized.includes("too many requests")) {
+    return "Too many sign-in attempts. Please try again later.";
+  }
   return "Unable to sign in right now.";
 }
 
@@ -103,7 +106,7 @@ export function SignInForm() {
         <p className="text-slate-600">
           Need an account?{" "}
           <Link href="/auth/sign-up" className="font-medium text-blue-700 hover:underline">
-            Create one
+            Request one
           </Link>
         </p>
       </div>

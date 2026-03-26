@@ -195,12 +195,15 @@ export async function sendEmail(
 
   const missingConfig = !fromEmail || !domain || !apiKey;
   const forceSend = process.env.MAILGUN_FORCE_SEND === "true";
-  const useMock = missingConfig || (process.env.NODE_ENV !== "production" && !forceSend);
+  const useMock = process.env.NODE_ENV !== "production" && !forceSend;
+
+  if (missingConfig) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Mailgun is not configured.");
+    }
+  }
 
   if (useMock) {
-    if (missingConfig && process.env.NODE_ENV === "production") {
-      console.warn("[Email] Mailgun is not configured. Using mock email output.");
-    }
     logMockEmail(recipient, brandedSubject, brandedMessage, ccRecipients);
     return;
   }

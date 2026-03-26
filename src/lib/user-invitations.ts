@@ -2,7 +2,7 @@ import { Role } from "@prisma/client";
 
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
-import { generateToken, tokenExpiry } from "@/lib/tokens";
+import { generateToken, hashToken, tokenExpiry } from "@/lib/tokens";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -65,18 +65,19 @@ export async function inviteUser(input: InviteUserInput) {
   }
 
   const token = generateToken(24);
+  const tokenHash = hashToken(token);
   const expiresAt = tokenExpiry(72);
 
   await prisma.$transaction([
     prisma.passwordResetToken.deleteMany({ where: { userId } }),
     prisma.emailVerification.deleteMany({ where: { userId } }),
     prisma.passwordResetToken.create({
-      data: {
-        userId,
-        token,
-        expiresAt,
-      },
-    }),
+        data: {
+          userId,
+          token: tokenHash,
+          expiresAt,
+        },
+      }),
   ]);
 
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";

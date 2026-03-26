@@ -30,13 +30,6 @@ enum ModerationStatus {
   MAJOR_ISSUES
 }
 
-enum ModerationOutcome {
-  OK
-  TOO_HIGH
-  TOO_LOW
-  INCONSISTENT
-}
-
 enum ReviewFlagStatus {
   FLAGGED
   ACADEMIC_CONDUCT_REVIEW
@@ -59,16 +52,15 @@ model User {
   role              Role                 @default(USER)
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
-  moduleMemberships            ModuleMembership[]
-  moderatedAssessments         AssessmentInstance[] @relation("AssessmentModerator")
-  allocations                  Allocation[]         @relation("AllocationMarker")
-  moderationChecks             ModerationCheck[]    @relation("ModerationReviewer")
-  assessmentMarkerAssignments  AssessmentMarker[]
-  createdReviewFlags           ReviewFlag[]         @relation("ReviewFlagCreator")
-  archivedAssessmentTemplates   AssessmentTemplate[] @relation("AssessmentTemplateArchiver")
-  auditLogs                    AuditLog[]           @relation("AuditActor")
-  emailVerifications           EmailVerification[]
-  passwordResets               PasswordResetToken[]
+  moduleMemberships           ModuleMembership[]
+  moderatedAssessments        AssessmentInstance[] @relation("AssessmentModerator")
+  allocations                 Allocation[]         @relation("AllocationMarker")
+  assessmentMarkerAssignments AssessmentMarker[]
+  createdReviewFlags          ReviewFlag[]         @relation("ReviewFlagCreator")
+  archivedAssessmentTemplates AssessmentTemplate[] @relation("AssessmentTemplateArchiver")
+  auditLogs                   AuditLog[]           @relation("AuditActor")
+  emailVerifications          EmailVerification[]
+  passwordResets              PasswordResetToken[]
 }
 
 model Module {
@@ -130,17 +122,9 @@ model AssessmentInstance {
   @@index([academicYear])
 }
 
-model Student {
-  id            String   @id @default(cuid())
-  studentNumber String   @unique
-  name          String?
-  scripts       Script[]
-}
-
 model Script {
   id                   String             @id @default(cuid())
   assessmentInstanceId String
-  studentId            String?
   turnitinId           String
   submissionType       SubmissionType     @default(FIRST_SUBMISSION)
   externalUrl          String
@@ -150,9 +134,7 @@ model Script {
   version              Int                @default(1)
   lastEditedAt         DateTime           @default(now()) @updatedAt
   assessmentInstance   AssessmentInstance @relation(fields: [assessmentInstanceId], references: [id], onDelete: Cascade)
-  student              Student?           @relation(fields: [studentId], references: [id], onDelete: SetNull)
   allocation           Allocation?
-  moderationChecks     ModerationCheck[]
   reviewFlag           ReviewFlag?
 
   @@unique([assessmentInstanceId, turnitinId])
@@ -183,19 +165,6 @@ model Allocation {
   marker       User     @relation("AllocationMarker", fields: [markerUserId], references: [id], onDelete: Cascade)
 
   @@index([markerUserId])
-}
-
-model ModerationCheck {
-  id              String            @id @default(cuid())
-  scriptId        String
-  moderatorUserId String
-  outcome         ModerationOutcome
-  notes           String?
-  checkedAt       DateTime          @default(now())
-  script          Script            @relation(fields: [scriptId], references: [id], onDelete: Cascade)
-  moderator       User              @relation("ModerationReviewer", fields: [moderatorUserId], references: [id], onDelete: Cascade)
-
-  @@index([scriptId, checkedAt])
 }
 
 model ReviewFlag {

@@ -491,6 +491,10 @@ async function sendLeaderUnmarkedScriptReminders(now: Date) {
 export async function GET(request: Request) {
   const cronSecret = (process.env.CRON_SECRET || "").trim();
 
+  if (!cronSecret && process.env.NODE_ENV === "production") {
+    return NextResponse.json({ ok: false, error: "CRON_SECRET is not configured" }, { status: 500 });
+  }
+
   if (cronSecret) {
     const authorization = request.headers.get("authorization");
 

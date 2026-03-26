@@ -6,7 +6,8 @@ import { compare } from "bcryptjs";
 
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
-import { generateToken, tokenExpiry } from "@/lib/tokens";
+import { assertRateLimit } from "@/lib/rate-limit";
+import { generateToken, hashToken, tokenExpiry } from "@/lib/tokens";
 
 function getDisplayName(name: string | null | undefined, email: string): string {
   if (name?.trim()) {
@@ -51,6 +52,12 @@ export const authOptions: NextAuthOptions = {
                 throw new Error("Invalid email or password");
               }
 
+              assertRateLimit({
+                key: `sign-in:${normalizedEmail}`,
+                limit: 10,
+                windowMs: 15 * 60 * 1000,
+              });
+
               const user = await prisma.user.findUnique({
                 where: { email: normalizedEmail },
                 select: {
@@ -74,6 +81,7 @@ export const authOptions: NextAuthOptions = {
 
               if (!user.emailVerified) {
                 const token = generateToken(24);
+                const tokenHash = hashToken(token);
                 const expiresAt = tokenExpiry(24);
 
                 await prisma.$transaction([
@@ -81,7 +89,7 @@ export const authOptions: NextAuthOptions = {
                   prisma.emailVerification.create({
                     data: {
                       userId: user.id,
-                      token,
+                      token: tokenHash,
                       expiresAt,
                     },
                   }),

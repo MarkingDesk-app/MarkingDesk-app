@@ -23,8 +23,6 @@ const demoUsers = [
 const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   {
     turnitinId: "223456781",
-    studentNumber: "DEMO24-S001",
-    name: "Alice Green",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456781",
     submissionType: SubmissionType.FIRST_SUBMISSION,
     markerEmail: "demo.leader@markingdesk.test",
@@ -33,8 +31,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456782",
-    studentNumber: "DEMO24-S002",
-    name: "Ben Carter",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456782",
     submissionType: SubmissionType.FIRST_SUBMISSION,
     markerEmail: "demo.leader@markingdesk.test",
@@ -43,8 +39,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456783",
-    studentNumber: "DEMO24-S003",
-    name: "Cara Wilson",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456783",
     submissionType: SubmissionType.SEVEN_DAY_WINDOW,
     markerEmail: "demo.leader@markingdesk.test",
@@ -53,8 +47,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456784",
-    studentNumber: "DEMO24-S004",
-    name: "Daniel Brooks",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456784",
     submissionType: SubmissionType.FIRST_SUBMISSION,
     markerEmail: "demo.marker@markingdesk.test",
@@ -63,8 +55,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456785",
-    studentNumber: "DEMO24-S005",
-    name: "Ella Young",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456785",
     submissionType: SubmissionType.FIRST_SUBMISSION,
     markerEmail: "demo.marker@markingdesk.test",
@@ -73,8 +63,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456786",
-    studentNumber: "DEMO24-S006",
-    name: "Finn Roberts",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456786",
     submissionType: SubmissionType.SEVEN_DAY_WINDOW,
     markerEmail: "demo.marker@markingdesk.test",
@@ -83,8 +71,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456787",
-    studentNumber: "DEMO24-S007",
-    name: "Grace Hall",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456787",
     submissionType: SubmissionType.FIRST_SUBMISSION,
     markerEmail: "demo.second-marker@markingdesk.test",
@@ -93,8 +79,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456788",
-    studentNumber: "DEMO24-S008",
-    name: "Henry Adams",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456788",
     submissionType: SubmissionType.FIRST_SUBMISSION,
     markerEmail: "demo.second-marker@markingdesk.test",
@@ -103,8 +87,6 @@ const PREVIOUS_YEAR_DEMO_SCRIPTS = [
   },
   {
     turnitinId: "223456789",
-    studentNumber: "DEMO24-S009",
-    name: "Ivy Turner",
     externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=223456789",
     submissionType: SubmissionType.SEVEN_DAY_WINDOW,
     markerEmail: "demo.second-marker@markingdesk.test",
@@ -222,43 +204,31 @@ async function main() {
   const demoScripts = [
     {
       turnitinId: "123456781",
-      studentNumber: "DEMO-S001",
-      name: "Alex Smith",
       externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=123456781",
       submissionType: SubmissionType.FIRST_SUBMISSION,
     },
     {
       turnitinId: "123456782",
-      studentNumber: "DEMO-S002",
-      name: "Bea Jones",
       externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=123456782",
       submissionType: SubmissionType.SEVEN_DAY_WINDOW,
     },
     {
       turnitinId: "123456783",
-      studentNumber: "DEMO-S003",
-      name: "Chris Patel",
       externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=123456783",
       submissionType: SubmissionType.FIRST_SUBMISSION,
     },
     {
       turnitinId: "123456784",
-      studentNumber: "DEMO-S004",
-      name: "Dana Miller",
       externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=123456784",
       submissionType: SubmissionType.FIRST_SUBMISSION,
     },
     {
       turnitinId: "123456785",
-      studentNumber: "DEMO-S005",
-      name: "Evan Brown",
       externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=123456785",
       submissionType: SubmissionType.SEVEN_DAY_WINDOW,
     },
     {
       turnitinId: "123456786",
-      studentNumber: "DEMO-S006",
-      name: "Fern Davis",
       externalUrl: "https://ev.turnitinuk.com/app/carta/en_us/?u=9717219&lang=en_us&ro=103&o=123456786",
       submissionType: SubmissionType.FIRST_SUBMISSION,
     },
@@ -267,12 +237,6 @@ async function main() {
   const scripts = [];
 
   for (const row of demoScripts) {
-    const student = await prisma.student.upsert({
-      where: { studentNumber: row.studentNumber },
-      update: { name: row.name },
-      create: { studentNumber: row.studentNumber, name: row.name },
-    });
-
     const script = await prisma.script.upsert({
       where: {
         assessmentInstanceId_turnitinId: {
@@ -281,14 +245,12 @@ async function main() {
         },
       },
       update: {
-        studentId: student.id,
         turnitinId: row.turnitinId,
         submissionType: row.submissionType,
         externalUrl: row.externalUrl,
       },
       create: {
         assessmentInstanceId: assessment.id,
-        studentId: student.id,
         turnitinId: row.turnitinId,
         submissionType: row.submissionType,
         externalUrl: row.externalUrl,
@@ -425,12 +387,6 @@ async function main() {
   );
 
   for (const row of PREVIOUS_YEAR_DEMO_SCRIPTS) {
-    const student = await prisma.student.upsert({
-      where: { studentNumber: row.studentNumber },
-      update: { name: row.name },
-      create: { studentNumber: row.studentNumber, name: row.name },
-    });
-
     const script = await prisma.script.upsert({
       where: {
         assessmentInstanceId_turnitinId: {
@@ -439,7 +395,6 @@ async function main() {
         },
       },
       update: {
-        studentId: student.id,
         submissionType: row.submissionType,
         externalUrl: row.externalUrl,
         status: ScriptStatus.COMPLETED,
@@ -448,7 +403,6 @@ async function main() {
       },
       create: {
         assessmentInstanceId: previousYearAssessment.id,
-        studentId: student.id,
         turnitinId: row.turnitinId,
         submissionType: row.submissionType,
         externalUrl: row.externalUrl,

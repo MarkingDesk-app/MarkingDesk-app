@@ -13,7 +13,6 @@ type SignupResponse = {
 export function SignUpForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -28,19 +27,20 @@ export function SignUpForm() {
       const response = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email }),
       });
 
       const payload = (await response.json().catch(() => ({}))) as SignupResponse;
       if (!response.ok) {
-        setError(payload.error ?? "Unable to create account");
+        setError(payload.error ?? "Unable to submit your request");
         return;
       }
 
-      setMessage(payload.message ?? "Account created. Check your inbox for a verification email.");
-      setPassword("");
+      setMessage(payload.message ?? "Your request has been submitted.");
+      setName("");
+      setEmail("");
     } catch {
-      setError("Unable to create account");
+      setError("Unable to submit your request");
     } finally {
       setLoading(false);
     }
@@ -81,33 +81,16 @@ export function SignUpForm() {
           />
         </div>
 
-        <div className="space-y-1">
-          <label htmlFor="signup-password" className="text-sm font-medium text-slate-700">
-            Password
-          </label>
-          <input
-            id="signup-password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-blue-500 focus:ring-2"
-            placeholder="At least 8 characters"
-          />
-        </div>
-
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {message ? <p className="text-sm text-green-700">{message}</p> : null}
 
         <Button className="w-full" type="submit" disabled={loading}>
-          {loading ? "Creating account..." : "Create account"}
+          {loading ? "Sending request..." : "Request account"}
         </Button>
       </form>
 
       <p className="text-center text-sm text-slate-600">
-        Already have an account?{" "}
+        Already have access?{" "}
         <Link href="/auth/sign-in" className="font-medium text-blue-700 hover:underline">
           Sign in
         </Link>

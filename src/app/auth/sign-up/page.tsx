@@ -18,9 +18,12 @@ export default async function SignUpPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <UserPlus className="h-5 w-5 text-blue-600" />
-            Create account
+            Request account
           </CardTitle>
-          <CardDescription>Register with your email, then confirm it to activate your account.</CardDescription>
+          <CardDescription>
+            MarkingDesk accounts are issued by invitation. Submit your details here and the administrator will review
+            your request.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <SignUpForm />

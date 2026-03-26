@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
-import { generateToken, tokenExpiry } from "@/lib/tokens";
+import { assertRateLimit, getClientIp, RateLimitError } from "@/lib/rate-limit";
+import { generateToken, hashToken, tokenExpiry } from "@/lib/tokens";
 
 type RequestBody = {
   email?: string;
@@ -25,6 +26,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const clientIp = getClientIp(request.headers);
+
+    assertRateLimit({
+      key: `password-reset-request:${clientIp}:${email}`,
+      limit: 5,
+      windowMs: 60 * 60 * 1000,
+    });
+
     const user = await prisma.user.findUnique({
       where: { email },
       select: { id: true, name: true, email: true, passwordHash: true },
@@ -32,6 +41,7 @@ export async function POST(request: NextRequest) {
 
     if (user?.passwordHash) {
       const token = generateToken(24);
+      const tokenHash = hashToken(token);
       const expiresAt = tokenExpiry(2);
 
       await prisma.$transaction([
@@ -39,7 +49,7 @@ export async function POST(request: NextRequest) {
         prisma.passwordResetToken.create({
           data: {
             userId: user.id,
-            token,
+            token: tokenHash,
             expiresAt,
           },
         }),
@@ -59,6 +69,10 @@ export async function POST(request: NextRequest) {
       message: "If an account exists for that email, a reset link has been sent.",
     });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
+    }
+
     console.error("Password reset request error", error);
     return NextResponse.json({ error: "Unable to process reset request" }, { status: 500 });
   }

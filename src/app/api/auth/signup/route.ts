@@ -1,17 +1,14 @@
-import { Role } from "@prisma/client";
-import { hash } from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
-import { generateToken, tokenExpiry } from "@/lib/tokens";
+import { assertRateLimit, getClientIp, RateLimitError } from "@/lib/rate-limit";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type SignupBody = {
   name?: string;
   email?: string;
-  password?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -25,7 +22,6 @@ export async function POST(request: NextRequest) {
 
   const name = body.name?.trim() ?? "";
   const email = body.email?.trim().toLowerCase() ?? "";
-  const password = body.password ?? "";
 
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -33,76 +29,69 @@ export async function POST(request: NextRequest) {
   if (!email || !EMAIL_REGEX.test(email)) {
     return NextResponse.json({ error: "A valid email is required" }, { status: 400 });
   }
-  if (!password || password.length < 8) {
-    return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
-  }
 
   try {
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-      select: { id: true, passwordHash: true },
+    const adminEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    const clientIp = getClientIp(request.headers);
+
+    assertRateLimit({
+      key: `signup-request:${clientIp}:${email}`,
+      limit: 5,
+      windowMs: 60 * 60 * 1000,
     });
 
-    const passwordHash = await hash(password, 10);
-
-    let userId: string;
-    if (existingUser) {
-      if (existingUser.passwordHash) {
-        return NextResponse.json({ error: "An account with this email already exists" }, { status: 409 });
-      }
-
-      const updated = await prisma.user.update({
-        where: { id: existingUser.id },
-        data: {
-          name,
-          passwordHash,
-          emailVerified: null,
-        },
-        select: { id: true },
-      });
-      userId = updated.id;
-    } else {
-      const created = await prisma.user.create({
-        data: {
-          name,
-          email,
-          passwordHash,
-          role: Role.USER,
-        },
-        select: { id: true },
-      });
-      userId = created.id;
+    if (!adminEmail || !EMAIL_REGEX.test(adminEmail)) {
+      console.error("Signup request error", new Error("ADMIN_EMAIL is not configured."));
+      return NextResponse.json({ error: "Account requests are not configured right now." }, { status: 500 });
     }
 
-    const token = generateToken(24);
-    const expiresAt = tokenExpiry(48);
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        passwordHash: true,
+        emailVerified: true,
+      },
+    });
 
-    await prisma.$transaction([
-      prisma.emailVerification.deleteMany({ where: { userId } }),
-      prisma.emailVerification.create({
-        data: {
-          userId,
-          token,
-          expiresAt,
-        },
-      }),
-    ]);
-
-    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin || "http://localhost:3000";
-    const verifyLink = `${baseUrl}/auth/verify-email?token=${token}`;
+    const requestedAt = new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Europe/London",
+    }).format(new Date());
+    const appUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin || "http://localhost:3000";
+    const existingAccountLabel =
+      existingUser?.passwordHash && existingUser.emailVerified ? "Existing active account" : "No active account";
 
     await sendEmail(
-      email,
-      "Activate your MarkingDesk account",
-      `Hello ${name},\n\nPlease verify your email by visiting the link below:\n${verifyLink}\n\nIf you did not create this account, you can ignore this email.`
+      adminEmail,
+      "MarkingDesk account request",
+      [
+        "A new request for a MarkingDesk account has been submitted.",
+        "",
+        `Name: ${name}`,
+        `Email: ${email}`,
+        `Requested: ${requestedAt}`,
+        `Account status: ${existingAccountLabel}`,
+        "",
+        `App: ${appUrl}`,
+        "Invite this user from the Admin area if access should be granted.",
+      ].join("\n")
     );
 
     return NextResponse.json(
-      { message: "Account created. Please check your email to activate your account." },
-      { status: 201 }
+      {
+        message:
+          "Your request has been sent to the MarkingDesk administrator. You will receive an invitation email if access is approved.",
+      },
+      { status: 202 }
     );
   } catch (error) {
-    console.error("Signup error", error);
-    return NextResponse.json({ error: "Unable to create account right now" }, { status: 500 });
+    if (error instanceof RateLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
+    }
+
+    console.error("Signup request error", error);
+    return NextResponse.json({ error: "Unable to submit your account request right now" }, { status: 500 });
   }
 }
