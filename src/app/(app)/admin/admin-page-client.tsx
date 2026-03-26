@@ -9,6 +9,7 @@ import { inviteUserAction, saveMembershipAction, toggleMembershipAction } from "
 import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PendingNotice } from "@/components/ui/loading-state";
 
 type ModuleOption = {
   id: string;
@@ -158,6 +159,12 @@ export function AdminPageClient({ modules, memberships }: AdminPageClientProps) 
 
   return (
     <div className="space-y-6">
+      <PendingNotice
+        show={isPending}
+        title="Updating access"
+        description="Saving changes and refreshing the latest module membership data."
+      />
+
       <section className="rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
         <div className="flex items-start gap-3">
           <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-100 text-sky-700">

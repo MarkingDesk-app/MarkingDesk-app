@@ -66,7 +66,7 @@ export function ForgotPasswordForm() {
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         {message ? <p className="text-sm text-green-700">{message}</p> : null}
 
-        <Button className="w-full" type="submit" disabled={loading}>
+        <Button className="w-full" type="submit" loading={loading}>
           {loading ? "Sending..." : "Send reset link"}
         </Button>
       </form>

@@ -3,12 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { assertRateLimit, getClientIp, RateLimitError } from "@/lib/rate-limit";
+import { verifySignupCaptchaAnswer } from "@/lib/signup-captcha";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type SignupBody = {
   name?: string;
   email?: string;
+  captchaToken?: string;
+  captchaAnswer?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -22,6 +25,8 @@ export async function POST(request: NextRequest) {
 
   const name = body.name?.trim() ?? "";
   const email = body.email?.trim().toLowerCase() ?? "";
+  const captchaToken = body.captchaToken?.trim() ?? "";
+  const captchaAnswer = body.captchaAnswer?.trim() ?? "";
 
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -43,6 +48,9 @@ export async function POST(request: NextRequest) {
     if (!adminEmail || !EMAIL_REGEX.test(adminEmail)) {
       console.error("Signup request error", new Error("ADMIN_EMAIL is not configured."));
       return NextResponse.json({ error: "Account requests are not configured right now." }, { status: 500 });
+    }
+    if (!verifySignupCaptchaAnswer({ token: captchaToken, answer: captchaAnswer })) {
+      return NextResponse.json({ error: "The maths answer was incorrect or expired. Please try again." }, { status: 400 });
     }
 
     const existingUser = await prisma.user.findUnique({

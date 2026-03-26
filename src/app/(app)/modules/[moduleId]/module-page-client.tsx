@@ -20,6 +20,7 @@ import { AsyncUserMultiPicker } from "@/components/ui/async-user-multi-picker";
 import { AsyncUserPicker } from "@/components/ui/async-user-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PendingNotice } from "@/components/ui/loading-state";
 import { ModalShell } from "@/components/ui/modal-shell";
 
 type ModuleLeader = {
@@ -338,6 +339,12 @@ export function ModulePageClient({
 
   return (
     <div className="space-y-6">
+      <PendingNotice
+        show={isPending}
+        title="Updating module"
+        description="Saving the latest team, assessment, or archive changes."
+      />
+
       <section className="flex flex-col gap-4 rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

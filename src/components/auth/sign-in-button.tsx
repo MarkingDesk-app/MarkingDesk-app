@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { signIn } from "next-auth/react";
 import { useState } from "react";
 
@@ -16,8 +16,8 @@ export function SignInButton() {
   }
 
   return (
-    <Button className="w-full" onClick={handleSignIn} disabled={loading}>
-      {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+    <Button className="w-full" onClick={handleSignIn} loading={loading}>
+      {!loading ? <LogIn className="h-4 w-4" /> : null}
       Continue With Microsoft
     </Button>
   );
