@@ -14,9 +14,12 @@ export type DistributionSeries = {
   count: number;
   min: number;
   q1: number;
+  median: number;
   mean: number;
   q3: number;
   max: number;
+  range: number;
+  standardDeviation: number;
 };
 
 export type DistributionMarkerSlot = {
@@ -63,9 +66,32 @@ const PREVIOUS_FILLS = [
   "rgba(180, 83, 9, 0.10)",
   "rgba(190, 18, 60, 0.10)",
 ];
+const OVERALL_MARKER_ID = "__overall__";
 
 function formatStat(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function getDistributionPalette(
+  distribution: Pick<DistributionSeries, "academicYear" | "isCurrentYear">,
+  previousYears: PreviousYearOption[]
+) {
+  if (distribution.isCurrentYear) {
+    return {
+      stroke: CURRENT_STROKE,
+      fill: CURRENT_FILL,
+      dash: undefined,
+    };
+  }
+
+  const yearIndex = previousYears.findIndex((year) => year.academicYear === distribution.academicYear);
+  const paletteIndex = yearIndex >= 0 ? yearIndex % PREVIOUS_STROKES.length : 0;
+
+  return {
+    stroke: PREVIOUS_STROKES[paletteIndex] ?? PREVIOUS_STROKES[0],
+    fill: PREVIOUS_FILLS[paletteIndex] ?? PREVIOUS_FILLS[0],
+    dash: "5 4",
+  };
 }
 
 function buildMarkerLabelLines(markerName: string): string[] {
@@ -128,6 +154,22 @@ export function AssessmentDistributionClient({
   const [tooltip, setTooltip] = useState<TooltipState>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const visibleSlots = useVisibleSlots(slots, includePreviousYears);
+  const overallSlot = useMemo(
+    () => slots.find((slot) => slot.markerId === OVERALL_MARKER_ID) ?? null,
+    [slots]
+  );
+  const overallSummaryDistributions = useMemo(() => {
+    if (!overallSlot) {
+      return [];
+    }
+
+    return [
+      ...(overallSlot.currentDistribution ? [overallSlot.currentDistribution] : []),
+      ...(includePreviousYears ? overallSlot.previousDistributions : []),
+    ];
+  }, [includePreviousYears, overallSlot]);
+  const visibleMarkerCount = visibleSlots.filter((slot) => slot.markerId !== OVERALL_MARKER_ID).length;
+  const includesOverallSlot = visibleSlots.some((slot) => slot.markerId === OVERALL_MARKER_ID);
   const chartHeight = 480;
   const chartPadding = {
     top: 28,
@@ -142,6 +184,12 @@ export function AssessmentDistributionClient({
     (sum, slot) => sum + (slot.currentDistribution ? 1 : 0) + (includePreviousYears ? slot.previousDistributions.length : 0),
     0
   );
+  const visibleSlotSummary =
+    visibleMarkerCount === 0
+      ? includesOverallSlot
+        ? "Overall only"
+        : "No markers shown"
+      : `${visibleMarkerCount} marker${visibleMarkerCount === 1 ? "" : "s"}${includesOverallSlot ? " + overall" : ""}`;
 
   const legendItems = [
     {
@@ -196,7 +244,7 @@ export function AssessmentDistributionClient({
                 </span>
               ) : null}
               <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
-                {visibleSlots.length} marker{visibleSlots.length === 1 ? "" : "s"} shown
+                {visibleSlotSummary}
               </span>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
                 {visiblePlotCount} distribution{visiblePlotCount === 1 ? "" : "s"}
@@ -219,10 +267,74 @@ export function AssessmentDistributionClient({
         </div>
       </section>
 
+      {overallSummaryDistributions.length > 0 ? (
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-slate-200/80">
+            <div className="flex flex-col gap-2">
+              <CardTitle className="text-base sm:text-lg">Overall distribution statistics</CardTitle>
+              <p className="text-sm text-slate-600">
+                Summary statistics across all markers for the current assessment year
+                {includePreviousYears && overallSummaryDistributions.length > 1 ? " and included previous years." : "."}
+              </p>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="grid gap-3 xl:grid-cols-2">
+              {overallSummaryDistributions.map((distribution) => {
+                const palette = getDistributionPalette(distribution, previousYears);
+
+                return (
+                  <section
+                    key={`overall-summary-${distribution.key}`}
+                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">{distribution.academicYear}</p>
+                        <p className="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                          {distribution.count} scripts
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700">
+                        <span
+                          className="inline-block h-3 w-3 rounded-full border"
+                          style={{
+                            backgroundColor: palette.fill,
+                            borderColor: palette.stroke,
+                            borderStyle: palette.dash ? "dashed" : "solid",
+                          }}
+                        />
+                        {distribution.isCurrentYear ? "Current year" : "Previous year"}
+                      </span>
+                    </div>
+
+                    <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {[
+                        { label: "Minimum", value: distribution.min },
+                        { label: "Mean", value: distribution.mean },
+                        { label: "Median", value: distribution.median },
+                        { label: "Maximum", value: distribution.max },
+                        { label: "Range", value: distribution.range },
+                        { label: "Std. dev.", value: distribution.standardDeviation },
+                      ].map((stat) => (
+                        <div key={stat.label} className="rounded-xl border border-slate-200/80 bg-white px-3 py-2">
+                          <dt className="text-[11px] font-medium text-slate-500">{stat.label}</dt>
+                          <dd className="mt-1 text-base font-semibold text-slate-950">{formatStat(stat.value)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="overflow-hidden">
         <CardHeader className="border-b border-slate-200/80">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <CardTitle className="text-xl">Marker grade distribution</CardTitle>
+            <CardTitle className="text-xl">Grade distribution</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
               {legendItems.map((item) => (
                 <span
@@ -310,9 +422,7 @@ export function AssessmentDistributionClient({
                       ? [
                           {
                             ...slot.currentDistribution,
-                            stroke: CURRENT_STROKE,
-                            fill: CURRENT_FILL,
-                            dash: undefined,
+                            ...getDistributionPalette(slot.currentDistribution, previousYears),
                             boxWidth: 34,
                             xOffset: 0,
                           },
@@ -321,17 +431,7 @@ export function AssessmentDistributionClient({
                     ...(includePreviousYears
                       ? slot.previousDistributions.map((distribution, previousIndex) => ({
                           ...distribution,
-                          stroke:
-                            PREVIOUS_STROKES[
-                              previousYears.findIndex((year) => year.academicYear === distribution.academicYear) %
-                                PREVIOUS_STROKES.length
-                            ] ?? PREVIOUS_STROKES[0],
-                          fill:
-                            PREVIOUS_FILLS[
-                              previousYears.findIndex((year) => year.academicYear === distribution.academicYear) %
-                                PREVIOUS_FILLS.length
-                            ] ?? PREVIOUS_FILLS[0],
-                          dash: "5 4",
+                          ...getDistributionPalette(distribution, previousYears),
                           boxWidth: 20,
                           xOffset: getPreviousOffset(previousIndex),
                         }))

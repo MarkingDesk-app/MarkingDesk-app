@@ -13,6 +13,28 @@ type DistributionPageProps = {
   params: Promise<{ moduleId: string; assessmentId: string }>;
 };
 
+type DistributionScriptRecord = {
+  grade: number | null;
+  allocation: {
+    markerUserId: string;
+    marker: {
+      id: string;
+      name: string | null;
+      email: string | null;
+    };
+  } | null;
+};
+
+const OVERALL_MARKER_ID = "__overall__";
+const OVERALL_MARKER_NAME = "Overall";
+
+function extractGrades(scripts: DistributionScriptRecord[], markerId?: string): number[] {
+  return scripts
+    .filter((script) => (markerId ? script.allocation?.markerUserId === markerId : true))
+    .map((script) => script.grade)
+    .filter((grade): grade is number => grade !== null);
+}
+
 function buildDistributionSeries(input: {
   assessmentId: string;
   academicYear: string;
@@ -198,16 +220,12 @@ export default async function AssessmentDistributionPage({ params }: Distributio
   const currentInstanceDistributions = new Map<string, DistributionSeries>();
 
   for (const marker of sortedMarkerSlots) {
-    const grades = assessment.scripts
-      .filter((script) => script.allocation?.markerUserId === marker.markerId)
-      .map((script) => script.grade)
-      .filter((grade): grade is number => grade !== null);
     const series = buildDistributionSeries({
       assessmentId: assessment.id,
       academicYear: assessment.academicYear,
       markerId: marker.markerId,
       markerName: marker.markerName,
-      grades,
+      grades: extractGrades(assessment.scripts, marker.markerId),
       isCurrentYear: true,
     });
 
@@ -224,17 +242,12 @@ export default async function AssessmentDistributionPage({ params }: Distributio
   const markerSlots: DistributionMarkerSlot[] = sortedMarkerSlots.map((marker) => {
     const previousDistributions = previousInstances
       .map((instance) => {
-        const grades = instance.scripts
-          .filter((script) => script.allocation?.markerUserId === marker.markerId)
-          .map((script) => script.grade)
-          .filter((grade): grade is number => grade !== null);
-
         return buildDistributionSeries({
           assessmentId: instance.id,
           academicYear: instance.academicYear,
           markerId: marker.markerId,
           markerName: marker.markerName,
-          grades,
+          grades: extractGrades(instance.scripts, marker.markerId),
           isCurrentYear: false,
         });
       })
@@ -254,6 +267,43 @@ export default async function AssessmentDistributionPage({ params }: Distributio
       previousDistributions,
     };
   });
+
+  const overallCurrentDistribution = buildDistributionSeries({
+    assessmentId: assessment.id,
+    academicYear: assessment.academicYear,
+    markerId: OVERALL_MARKER_ID,
+    markerName: OVERALL_MARKER_NAME,
+    grades: extractGrades(assessment.scripts),
+    isCurrentYear: true,
+  });
+  const overallPreviousDistributions = previousInstances
+    .map((instance) =>
+      buildDistributionSeries({
+        assessmentId: instance.id,
+        academicYear: instance.academicYear,
+        markerId: OVERALL_MARKER_ID,
+        markerName: OVERALL_MARKER_NAME,
+        grades: extractGrades(instance.scripts),
+        isCurrentYear: false,
+      })
+    )
+    .filter((distribution): distribution is DistributionSeries => distribution !== null);
+
+  for (const distribution of overallPreviousDistributions) {
+    previousDistributionYears.set(
+      distribution.academicYear,
+      (previousDistributionYears.get(distribution.academicYear) ?? 0) + 1
+    );
+  }
+
+  if (overallCurrentDistribution || overallPreviousDistributions.length > 0) {
+    markerSlots.push({
+      markerId: OVERALL_MARKER_ID,
+      markerName: OVERALL_MARKER_NAME,
+      currentDistribution: overallCurrentDistribution,
+      previousDistributions: overallPreviousDistributions,
+    });
+  }
 
   const previousYears = previousInstances
     .map((instance) => ({

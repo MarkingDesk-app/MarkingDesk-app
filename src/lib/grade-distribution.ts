@@ -2,9 +2,12 @@ export type BoxPlotStats = {
   count: number;
   min: number;
   q1: number;
+  median: number;
   mean: number;
   q3: number;
   max: number;
+  range: number;
+  standardDeviation: number;
 };
 
 function quantile(sortedValues: number[], percentile: number): number {
@@ -33,13 +36,21 @@ export function computeBoxPlotStats(values: number[]): BoxPlotStats | null {
 
   const sortedValues = [...values].sort((left, right) => left - right);
   const total = sortedValues.reduce((sum, value) => sum + value, 0);
+  const mean = total / sortedValues.length;
+  const min = sortedValues[0] ?? 0;
+  const max = sortedValues[sortedValues.length - 1] ?? 0;
+  const variance =
+    sortedValues.reduce((sum, value) => sum + (value - mean) ** 2, 0) / sortedValues.length;
 
   return {
     count: sortedValues.length,
-    min: sortedValues[0] ?? 0,
+    min,
     q1: quantile(sortedValues, 0.25),
-    mean: total / sortedValues.length,
+    median: quantile(sortedValues, 0.5),
+    mean,
     q3: quantile(sortedValues, 0.75),
-    max: sortedValues[sortedValues.length - 1] ?? 0,
+    max,
+    range: max - min,
+    standardDeviation: Math.sqrt(variance),
   };
 }
