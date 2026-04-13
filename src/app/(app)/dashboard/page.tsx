@@ -6,7 +6,9 @@ import { Suspense } from "react";
 import { DashboardClient } from "./dashboard-client";
 import { DashboardSkeleton } from "./dashboard-skeleton";
 import { PageBreadcrumbs } from "@/components/breadcrumb-context";
+import { getCurrentAcademicYearLabel } from "@/lib/academic-year";
 import { authOptions } from "@/lib/auth";
+import { buildDashboardProgressSummary } from "@/lib/dashboard-utils";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
 import type { UserPickerOption } from "@/components/ui/user-picker";
@@ -42,19 +44,10 @@ function summarizeModule(module: {
   }[];
 }, currentUserId: string) {
   const allInstances = module.assessmentTemplates.flatMap((template) => template.assessmentInstances);
-  const totalScripts = allInstances.reduce((sum, instance) => sum + instance.totalScripts, 0);
-  const markedScripts = allInstances.reduce((sum, instance) => sum + instance.markedScripts, 0);
-  const remainingScripts = totalScripts - markedScripts;
-  const myAllocatedScripts = allInstances.reduce((sum, instance) => sum + instance.myAllocatedScripts, 0);
-  const myMarkedScripts = allInstances.reduce((sum, instance) => sum + instance.myMarkedScripts, 0);
-  const nextDeadline = allInstances
-    .map((instance) => instance.dueAt)
-    .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
-  const progressPercentage = totalScripts === 0 ? 0 : Math.round((markedScripts / totalScripts) * 100);
+  const progressSummary = buildDashboardProgressSummary(allInstances, currentUserId);
   const leaders = module.memberships
     .filter((membership) => membership.isLeader)
     .map((membership) => getDisplayName(membership.user));
-  const moderatedAssessments = allInstances.filter((instance) => instance.moderatorUserId === currentUserId).length;
   const currentUserIsLeader = module.memberships.some(
     (membership) => membership.userId === currentUserId && membership.isLeader
   );
@@ -64,16 +57,16 @@ function summarizeModule(module: {
     code: module.code,
     title: module.title,
     assessments: module.assessmentTemplates.length,
-    totalScripts,
-    markedScripts,
-    remainingScripts,
-    myAllocatedScripts,
-    myMarkedScripts,
-    nextDeadline: formatDeadline(nextDeadline),
-    progressPercentage,
+    totalScripts: progressSummary.totalScripts,
+    markedScripts: progressSummary.markedScripts,
+    remainingScripts: progressSummary.remainingScripts,
+    myAllocatedScripts: progressSummary.myAllocatedScripts,
+    myMarkedScripts: progressSummary.myMarkedScripts,
+    nextDeadline: formatDeadline(progressSummary.nextDeadline),
+    progressPercentage: progressSummary.progressPercentage,
     currentUserIsLeader,
-    currentUserIsModerator: moderatedAssessments > 0,
-    moderatedAssessments,
+    currentUserIsModerator: progressSummary.moderatedAssessments > 0,
+    moderatedAssessments: progressSummary.moderatedAssessments,
     leaderSummary:
       leaders.length === 0
         ? "Module leader not assigned"
@@ -88,6 +81,7 @@ function buildCountMap(rows: { assessmentInstanceId: string; _count: { _all: num
 }
 
 async function getDashboardModules(userId: string, role: Role) {
+  const currentAcademicYear = getCurrentAcademicYearLabel(new Date());
   const includeConfig = {
     memberships: {
       where: { active: true, isLeader: true },
@@ -106,9 +100,17 @@ async function getDashboardModules(userId: string, role: Role) {
     assessmentTemplates: {
       where: {
         isArchived: false,
+        assessmentInstances: {
+          some: {
+            academicYear: currentAcademicYear,
+          },
+        },
       },
       include: {
         assessmentInstances: {
+          where: {
+            academicYear: currentAcademicYear,
+          },
           select: {
             id: true,
             dueAt: true,
@@ -145,6 +147,7 @@ async function getDashboardModules(userId: string, role: Role) {
                     isArchived: false,
                     assessmentInstances: {
                       some: {
+                        academicYear: currentAcademicYear,
                         moderatorUserId: userId,
                       },
                     },
@@ -157,6 +160,7 @@ async function getDashboardModules(userId: string, role: Role) {
                     isArchived: false,
                     assessmentInstances: {
                       some: {
+                        academicYear: currentAcademicYear,
                         markerAssignments: {
                           some: {
                             userId,
