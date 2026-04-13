@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -22,6 +22,12 @@ import type { UserPickerOption } from "@/components/ui/user-picker";
 
 type AssessmentPageProps = {
   params: Promise<{ moduleId: string; assessmentId: string }>;
+};
+
+type MarkerAllocationSummaryRow = {
+  markerUserId: string | null;
+  allocatedScripts: number;
+  markedScripts: number;
 };
 
 const userSummarySelect = {
@@ -61,8 +67,18 @@ type AssessmentShellData = {
   currentUserCanMarkAll: boolean;
 };
 
-function buildMarkerCountMap(rows: { markerUserId: string; _count: { _all: number } }[]) {
-  return new Map(rows.map((row) => [row.markerUserId, row._count._all]));
+function buildMarkerSummaryMap(rows: MarkerAllocationSummaryRow[]) {
+  return new Map(
+    rows
+      .filter((row): row is MarkerAllocationSummaryRow & { markerUserId: string } => typeof row.markerUserId === "string")
+      .map((row) => [
+        row.markerUserId,
+        {
+          allocatedScripts: row.allocatedScripts,
+          markedScripts: row.markedScripts,
+        },
+      ])
+  );
 }
 
 function formatDateTime(date: Date | null): string {
@@ -108,8 +124,7 @@ async function getAssessmentShellData({
   currentUserId: string;
   role: Role;
 }): Promise<AssessmentShellData> {
-  const [assessment, moduleMemberships, markedScriptCount, allocatedScriptCounts, markedAllocatedScriptCounts] =
-    await Promise.all([
+  const [assessment, moduleMemberships, markerAllocationSummary] = await Promise.all([
     prisma.assessmentInstance.findUnique({
       where: { id: assessmentId },
       select: {
@@ -171,39 +186,16 @@ async function getAssessmentShellData({
       },
       orderBy: [{ isLeader: "desc" }, { user: { name: "asc" } }, { user: { email: "asc" } }],
     }),
-    prisma.script.count({
-      where: {
-        assessmentInstanceId: assessmentId,
-        grade: { not: null },
-      },
-    }),
-    prisma.allocation.groupBy({
-      by: ["markerUserId"],
-      where: {
-        script: {
-          is: {
-            assessmentInstanceId: assessmentId,
-          },
-        },
-      },
-      _count: {
-        _all: true,
-      },
-    }),
-    prisma.allocation.groupBy({
-      by: ["markerUserId"],
-      where: {
-        script: {
-          is: {
-            assessmentInstanceId: assessmentId,
-            grade: { not: null },
-          },
-        },
-      },
-      _count: {
-        _all: true,
-      },
-    }),
+    prisma.$queryRaw<MarkerAllocationSummaryRow[]>(Prisma.sql`
+      SELECT
+        a."markerUserId" AS "markerUserId",
+        COUNT(s."id")::int AS "allocatedScripts",
+        COUNT(s."id") FILTER (WHERE s."grade" IS NOT NULL)::int AS "markedScripts"
+      FROM "Script" AS s
+      LEFT JOIN "Allocation" AS a ON a."scriptId" = s."id"
+      WHERE s."assessmentInstanceId" = ${assessmentId}
+      GROUP BY a."markerUserId"
+    `),
   ]);
 
   if (!assessment || assessment.assessmentTemplate.module.id !== moduleId) {
@@ -241,17 +233,17 @@ async function getAssessmentShellData({
       .filter(Boolean)
       .join(" · ") || undefined,
   }));
-  const allocatedScriptCountByMarkerId = buildMarkerCountMap(allocatedScriptCounts);
-  const markedAllocatedScriptCountByMarkerId = buildMarkerCountMap(markedAllocatedScriptCounts);
+  const markerSummaryById = buildMarkerSummaryMap(markerAllocationSummary);
   const markerProgress = markerOptions
     .map((marker) => {
-      const allocatedScripts = allocatedScriptCountByMarkerId.get(marker.id) ?? 0;
+      const summary = markerSummaryById.get(marker.id);
+      const allocatedScripts = summary?.allocatedScripts ?? 0;
 
       if (allocatedScripts === 0) {
         return null;
       }
 
-      const markedScripts = markedAllocatedScriptCountByMarkerId.get(marker.id) ?? 0;
+      const markedScripts = summary?.markedScripts ?? 0;
 
       return {
         markerId: marker.id,
@@ -269,8 +261,10 @@ async function getAssessmentShellData({
     }))
     .sort((left, right) => left.markerName.localeCompare(right.markerName));
   const totalScriptCount = assessment._count.scripts;
-  const myAllocatedScriptCount = allocatedScriptCountByMarkerId.get(currentUserId) ?? 0;
-  const myMarkedScriptCount = markedAllocatedScriptCountByMarkerId.get(currentUserId) ?? 0;
+  const markedScriptCount = markerAllocationSummary.reduce((total, row) => total + row.markedScripts, 0);
+  const currentUserSummary = markerSummaryById.get(currentUserId);
+  const myAllocatedScriptCount = currentUserSummary?.allocatedScripts ?? 0;
+  const myMarkedScriptCount = currentUserSummary?.markedScripts ?? 0;
 
   return {
     moduleId,
