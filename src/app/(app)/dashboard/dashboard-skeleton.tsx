@@ -42,8 +42,15 @@ function SkeletonCard() {
 export function DashboardSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <SkeletonBar className="h-12 w-full max-w-xl rounded-2xl" />
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1 space-y-4">
+          <SkeletonBar className="h-3 w-24" />
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">Dashboard</p>
+            <p className="text-3xl font-semibold tracking-tight text-slate-950">Loading dashboard</p>
+          </div>
+          <SkeletonBar className="h-12 w-full max-w-xl rounded-2xl" />
+        </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <SkeletonBar className="h-10 w-32 rounded-2xl" />
           <SkeletonBar className="h-10 w-24 rounded-2xl" />

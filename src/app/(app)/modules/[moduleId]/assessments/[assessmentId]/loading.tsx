@@ -11,7 +11,10 @@ export default function Loading() {
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1 space-y-4">
             <SkeletonBar className="h-3 w-24" />
-            <SkeletonBar className="h-9 w-80 max-w-full" />
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">Assessment</p>
+              <p className="text-3xl font-semibold tracking-tight text-slate-950">Assessment details loading</p>
+            </div>
             <div className="flex flex-wrap gap-2">
               <SkeletonBar className="h-8 w-32" />
               <SkeletonBar className="h-8 w-28" />
