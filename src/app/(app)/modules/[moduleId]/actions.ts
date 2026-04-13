@@ -1,6 +1,6 @@
 "use server";
 
-import { AuditAction, Role } from "@prisma/client";
+import { Role } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { getServerSession } from "next-auth";
 
@@ -12,7 +12,6 @@ import {
   saveAssessmentMarkerAssignment,
 } from "@/lib/assessment-team";
 import { authOptions } from "@/lib/auth";
-import { recordAuditLog } from "@/lib/audit";
 import { inviteUser } from "@/lib/user-invitations";
 import { prisma } from "@/lib/prisma";
 
@@ -273,19 +272,6 @@ export async function archiveAssessmentAction(input: {
         isArchived: true,
         archivedAt,
         archivedByUserId: session.user.id,
-      },
-    });
-
-    await recordAuditLog({
-      actorUserId: session.user.id,
-      entityType: "AssessmentTemplate",
-      entityId: assessmentTemplateId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "archive_assessment_template",
-        archivedAt,
-        archivedByUserId: session.user.id,
-        assessmentInstanceIds: template.assessmentInstances.map((assessmentInstance) => assessmentInstance.id),
       },
     });
 

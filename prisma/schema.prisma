@@ -37,12 +37,6 @@ enum ReviewFlagStatus {
   REVIEW_COMPLETED
 }
 
-enum AuditAction {
-  CREATE
-  UPDATE
-  DELETE
-}
-
 model User {
   id                String               @id @default(cuid())
   name              String
@@ -58,7 +52,6 @@ model User {
   assessmentMarkerAssignments AssessmentMarker[]
   createdReviewFlags          ReviewFlag[]         @relation("ReviewFlagCreator")
   archivedAssessmentTemplates AssessmentTemplate[] @relation("AssessmentTemplateArchiver")
-  auditLogs                   AuditLog[]           @relation("AuditActor")
   emailVerifications          EmailVerification[]
   passwordResets              PasswordResetToken[]
 }
@@ -183,20 +176,6 @@ model ReviewFlag {
   createdBy             User             @relation("ReviewFlagCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
 
   @@index([status])
-}
-
-model AuditLog {
-  id          String     @id @default(cuid())
-  actorUserId String
-  entityType  String
-  entityId    String
-  action      AuditAction
-  diffJson    Json
-  createdAt   DateTime   @default(now())
-  actor       User       @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Cascade)
-
-  @@index([entityType, entityId])
-  @@index([actorUserId, createdAt])
 }
 
 model EmailVerification {

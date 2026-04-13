@@ -1,7 +1,6 @@
 "use server";
 
 import {
-  AuditAction,
   ModerationStatus,
   ReviewFlagStatus,
   Role,
@@ -26,7 +25,6 @@ import {
   replaceAssessmentMarkerAssignments,
 } from "@/lib/assessment-team";
 import { authOptions } from "@/lib/auth";
-import { recordAuditLog } from "@/lib/audit";
 import { sendEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 
@@ -310,17 +308,6 @@ async function sendModerationRequestNotification(input: {
 
   try {
     await sendEmail(moderatorEmail, subject, message, { cc: ccEmails });
-    await recordAuditLog({
-      actorUserId: input.actorUserId,
-      entityType: "AssessmentInstance",
-      entityId: input.assessmentId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "moderation_requested",
-        requestedAt,
-        totalScripts,
-      },
-    });
   } catch (error) {
     await prisma.assessmentInstance.updateMany({
       where: {
@@ -420,24 +407,6 @@ export async function updateAssessmentSettingsAction(input: {
       markerUserIds,
     });
 
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "AssessmentInstance",
-      entityId: assessmentId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "update_assessment_settings",
-        dueAtBefore: assessment.dueAt,
-        dueAtAfter: dueAt,
-        markingDeadlineAtBefore: assessment.markingDeadlineAt,
-        markingDeadlineAtAfter: markingDeadlineAt,
-        moderatorUserIdBefore: assessment.moderatorUserId,
-        moderatorUserIdAfter: moderatorUserId,
-        markerUserIdsBefore: assessment.markerAssignments.map((assignment) => assignment.userId),
-        markerUserIdsAfter: markerUserIds,
-      },
-    });
-
     revalidateAssessmentPaths(moduleId, assessmentId);
 
     return {
@@ -527,19 +496,6 @@ export async function importAssessmentSubmissionsAction(input: {
       },
     });
 
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "AssessmentInstance",
-      entityId: assessmentId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "turnitin_import",
-        submissionType: input.submissionType,
-        createdCount: created.count,
-        turnitinIds: extractedIds,
-      },
-    });
-
     revalidateAssessmentPaths(moduleId, assessmentId);
 
     return {
@@ -598,16 +554,6 @@ export async function saveScriptAllocationAction(input: {
     if (!markerUserId) {
       if (script.allocation) {
         await prisma.allocation.delete({ where: { scriptId } });
-        await recordAuditLog({
-          actorUserId: context.sessionUserId,
-          entityType: "Allocation",
-          entityId: script.allocation.id,
-          action: AuditAction.DELETE,
-          diff: {
-            scriptId,
-            markerUserIdBefore: script.allocation.markerUserId,
-          },
-        });
       }
 
       revalidateAssessmentPaths(moduleId, assessmentId);
@@ -627,25 +573,12 @@ export async function saveScriptAllocationAction(input: {
       return { ok: false, error: "Select a marker from this assessment team." };
     }
 
-    const allocation = await prisma.allocation.upsert({
+    await prisma.allocation.upsert({
       where: { scriptId },
       update: { markerUserId },
       create: {
         scriptId,
         markerUserId,
-      },
-      select: { id: true },
-    });
-
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "Allocation",
-      entityId: allocation.id,
-      action: script.allocation ? AuditAction.UPDATE : AuditAction.CREATE,
-      diff: {
-        scriptId,
-        markerUserIdBefore: script.allocation?.markerUserId ?? null,
-        markerUserIdAfter: markerUserId,
       },
     });
 
@@ -726,38 +659,13 @@ export async function autoAssignUnallocatedScriptsAction(input: {
         continue;
       }
 
-      const allocation = await prisma.allocation.create({
+      await prisma.allocation.create({
         data: {
           scriptId,
           markerUserId,
         },
-        select: { id: true },
-      });
-
-      await recordAuditLog({
-        actorUserId: context.sessionUserId,
-        entityType: "Allocation",
-        entityId: allocation.id,
-        action: AuditAction.CREATE,
-        diff: {
-          scriptId,
-          markerUserIdAfter: markerUserId,
-          autoBalanced: true,
-        },
       });
     }
-
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "AssessmentInstance",
-      entityId: assessmentId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "auto_balance_allocation",
-        scriptsAllocated: unallocatedScriptIds.length,
-        markersUsed: markerIds.length,
-      },
-    });
 
     revalidateAssessmentPaths(moduleId, assessmentId);
 
@@ -937,7 +845,7 @@ export async function assignAllocationsAction(input: {
     }
 
     for (const item of plan) {
-      const allocation = await prisma.allocation.upsert({
+      await prisma.allocation.upsert({
         where: { scriptId: item.scriptId },
         update: {
           markerUserId: item.markerUserId,
@@ -945,20 +853,6 @@ export async function assignAllocationsAction(input: {
         create: {
           scriptId: item.scriptId,
           markerUserId: item.markerUserId,
-        },
-        select: { id: true },
-      });
-
-      await recordAuditLog({
-        actorUserId: context.sessionUserId,
-        entityType: "Allocation",
-        entityId: allocation.id,
-        action: AuditAction.UPDATE,
-        diff: {
-          operation: "assign_allocations",
-          scriptId: item.scriptId,
-          turnitinId: item.turnitinId,
-          markerUserIdAfter: item.markerUserId,
         },
       });
     }
@@ -998,22 +892,6 @@ export async function assignAllocationsAction(input: {
     } catch (error) {
       emailWarning = error instanceof Error ? error.message : "Allocation email notification failed.";
     }
-
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "AssessmentInstance",
-      entityId: assessmentId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "assign_allocations",
-        allocations: allocationCounts.map((allocation) => ({
-          markerUserId: allocation.markerUserId,
-          count: allocation.count,
-        })),
-        totalScripts: assessment.scripts.length,
-        moduleLeaderNames: leaderNames,
-      },
-    });
 
     revalidateAssessmentPaths(moduleId, assessmentId);
 
@@ -1082,28 +960,12 @@ export async function saveScriptGradeAction(input: {
 
     const nextStatus = parsedGrade === null ? ScriptStatus.NOT_STARTED : ScriptStatus.COMPLETED;
 
-    const updated = await prisma.script.update({
+    await prisma.script.update({
       where: { id: scriptId },
       data: {
         grade: parsedGrade,
         status: nextStatus,
         version: { increment: 1 },
-      },
-      select: { id: true },
-    });
-
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "Script",
-      entityId: updated.id,
-      action: AuditAction.UPDATE,
-      diff: {
-        gradeBefore: script.grade,
-        gradeAfter: parsedGrade,
-        statusBefore: script.status,
-        statusAfter: nextStatus,
-        versionBefore: script.version,
-        versionAfter: script.version + 1,
       },
     });
 
@@ -1211,22 +1073,6 @@ export async function saveAssessmentModerationAction(input: {
         moderationStatus: input.status,
         moderationReport: report,
         moderationCompletedAt: completedAt,
-      },
-    });
-
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "AssessmentInstance",
-      entityId: assessmentId,
-      action: AuditAction.UPDATE,
-      diff: {
-        operation: "moderation_report",
-        moderationStatusBefore: assessment.moderationStatus,
-        moderationStatusAfter: input.status,
-        moderationReportBefore: assessment.moderationReport,
-        moderationReportAfter: report,
-        moderationCompletedAtBefore: assessment.moderationCompletedAt,
-        moderationCompletedAtAfter: completedAt,
       },
     });
 
@@ -1370,8 +1216,8 @@ export async function saveReviewFlagAction(input: {
 
     const resolvedAt = isReviewFlagResolved(input.status) ? new Date() : null;
 
-    const reviewFlag = script.reviewFlag
-      ? await prisma.reviewFlag.update({
+    await (script.reviewFlag
+      ? prisma.reviewFlag.update({
           where: { scriptId },
           data: {
             status: input.status,
@@ -1380,9 +1226,8 @@ export async function saveReviewFlagAction(input: {
             notifiedLeaderUserIds: notifyLeaderUserIds,
             resolvedAt,
           },
-          select: { id: true },
         })
-      : await prisma.reviewFlag.create({
+      : prisma.reviewFlag.create({
           data: {
             scriptId,
             createdByUserId: context.sessionUserId,
@@ -1392,28 +1237,7 @@ export async function saveReviewFlagAction(input: {
             notifiedLeaderUserIds: notifyLeaderUserIds,
             resolvedAt,
           },
-          select: { id: true },
-        });
-
-    await recordAuditLog({
-      actorUserId: context.sessionUserId,
-      entityType: "ReviewFlag",
-      entityId: reviewFlag.id,
-      action: script.reviewFlag ? AuditAction.UPDATE : AuditAction.CREATE,
-      diff: {
-        scriptId,
-        statusBefore: script.reviewFlag?.status ?? null,
-        statusAfter: input.status,
-        reasonBefore: script.reviewFlag?.reason ?? null,
-        reasonAfter: reason || (script.reviewFlag?.reason ?? null),
-        outcomeNotesBefore: script.reviewFlag?.outcomeNotes ?? null,
-        outcomeNotesAfter: outcomeNotes,
-        notifyLeaderUserIdsBefore: script.reviewFlag?.notifiedLeaderUserIds ?? [],
-        notifyLeaderUserIdsAfter: notifyLeaderUserIds,
-        resolvedAtBefore: script.reviewFlag?.resolvedAt ?? null,
-        resolvedAtAfter: resolvedAt,
-      },
-    });
+        }));
 
     let emailWarning: string | null = null;
     const shouldSendInitialNotification =
