@@ -86,7 +86,6 @@ export function AssessmentWorkspaceShell({
   markingDeadlineAtInput,
   currentModeratorUserId,
   currentMarkerUserIds,
-  existingTurnitinIds,
   totalScriptCount,
   markedScriptCount,
   myAllocatedScriptCount,
@@ -106,6 +105,7 @@ export function AssessmentWorkspaceShell({
   const [importSubmissionType, setImportSubmissionType] = useState<SubmissionType>(SubmissionType.FIRST_SUBMISSION);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
+  const [conflictingExistingIds, setConflictingExistingIds] = useState<string[]>([]);
   const [settingsDueAt, setSettingsDueAt] = useState(dueAtInput);
   const [settingsMarkingDeadlineAt, setSettingsMarkingDeadlineAt] = useState(markingDeadlineAtInput);
   const [settingsModeratorUserId, setSettingsModeratorUserId] = useState(currentModeratorUserId);
@@ -158,16 +158,19 @@ export function AssessmentWorkspaceShell({
     myAllocatedScriptCount === 0 ? 0 : Math.round((myMarkedScriptCount / myAllocatedScriptCount) * 100);
   const extractedIds = useMemo(() => extractTurnitinIds(importText), [importText]);
   const duplicateIdsInPaste = useMemo(() => findDuplicateIds(extractedIds), [extractedIds]);
-  const existingTurnitinIdSet = useMemo(() => new Set(existingTurnitinIds), [existingTurnitinIds]);
+  const conflictingExistingIdSet = useMemo(() => new Set(conflictingExistingIds), [conflictingExistingIds]);
   const existingDuplicateIds = useMemo(
     () =>
-      Array.from(new Set(extractedIds.filter((turnitinId) => existingTurnitinIdSet.has(turnitinId)))).sort((left, right) =>
-        left.localeCompare(right)
+      Array.from(new Set(extractedIds.filter((turnitinId) => conflictingExistingIdSet.has(turnitinId)))).sort(
+        (left, right) => left.localeCompare(right)
       ),
-    [existingTurnitinIdSet, extractedIds]
+    [conflictingExistingIdSet, extractedIds]
   );
   const canImport =
-    extractedIds.length > 0 && duplicateIdsInPaste.length === 0 && existingDuplicateIds.length === 0 && !isPending;
+    extractedIds.length > 0 &&
+    duplicateIdsInPaste.length === 0 &&
+    existingDuplicateIds.length === 0 &&
+    !isPending;
   const allocationTotal = useMemo(
     () =>
       markerOptions.reduce(
@@ -207,13 +210,13 @@ export function AssessmentWorkspaceShell({
   };
 
   const handleRemoveExistingIds = () => {
-    rewriteImportTextWithIds(extractedIds.filter((turnitinId) => !existingTurnitinIdSet.has(turnitinId)));
+    rewriteImportTextWithIds(extractedIds.filter((turnitinId) => !conflictingExistingIdSet.has(turnitinId)));
     showToast("success", "Existing IDs removed from the import list.");
   };
 
   const handleKeepOnlyNewUniqueIds = () => {
     rewriteImportTextWithIds(
-      uniqueIdsInOrder(extractedIds).filter((turnitinId) => !existingTurnitinIdSet.has(turnitinId))
+      uniqueIdsInOrder(extractedIds).filter((turnitinId) => !conflictingExistingIdSet.has(turnitinId))
     );
     showToast("success", "Import list cleaned up.");
   };
@@ -265,6 +268,7 @@ export function AssessmentWorkspaceShell({
       });
 
       if (!result.ok) {
+        setConflictingExistingIds(result.data?.existingIds ?? []);
         setImportError(result.error);
         if (result.data?.duplicateIds?.length || result.data?.existingIds?.length) {
           setImportError("Remove duplicate IDs before importing submissions.");
@@ -275,6 +279,7 @@ export function AssessmentWorkspaceShell({
 
       setImportText("");
       setImportError(null);
+      setConflictingExistingIds([]);
       setShowImportModal(false);
       showToast("success", result.message ?? "Submissions imported.");
       router.refresh();
@@ -651,7 +656,11 @@ export function AssessmentWorkspaceShell({
 
       <ModalShell
         open={showImportModal}
-        onClose={() => setShowImportModal(false)}
+        onClose={() => {
+          setShowImportModal(false);
+          setImportError(null);
+          setConflictingExistingIds([]);
+        }}
         title="Import submissions"
         description="Paste the Turnitin page text and choose which submission window this batch belongs to."
       >
@@ -690,6 +699,7 @@ export function AssessmentWorkspaceShell({
               onChange={(event) => {
                 setImportText(event.target.value);
                 setImportError(null);
+                setConflictingExistingIds([]);
               }}
               rows={10}
               className="w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm outline-none ring-sky-500 focus:ring-2"
@@ -711,6 +721,13 @@ export function AssessmentWorkspaceShell({
               <p className="mt-2 text-2xl font-semibold text-slate-950">{existingDuplicateIds.length}</p>
             </div>
           </div>
+
+          {conflictingExistingIds.length === 0 && extractedIds.length > 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Existing IDs are checked when you submit the import, so this page does not preload every Turnitin ID for
+              the assessment.
+            </div>
+          ) : null}
 
           {duplicateIdsInPaste.length > 0 ? (
             <div className="space-y-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -758,7 +775,14 @@ export function AssessmentWorkspaceShell({
           ) : null}
 
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setShowImportModal(false)}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowImportModal(false);
+                setImportError(null);
+                setConflictingExistingIds([]);
+              }}
+            >
               Cancel
             </Button>
             <Button onClick={handleImportSubmit} disabled={!canImport}>

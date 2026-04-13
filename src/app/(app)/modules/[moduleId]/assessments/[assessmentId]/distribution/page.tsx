@@ -14,6 +14,7 @@ type DistributionPageProps = {
 };
 
 type DistributionScriptRecord = {
+  assessmentInstanceId: string;
   grade: number | null;
   allocation: {
     markerUserId: string;
@@ -28,11 +29,72 @@ type DistributionScriptRecord = {
 const OVERALL_MARKER_ID = "__overall__";
 const OVERALL_MARKER_NAME = "Overall";
 
-function extractGrades(scripts: DistributionScriptRecord[], markerId?: string): number[] {
-  return scripts
-    .filter((script) => (markerId ? script.allocation?.markerUserId === markerId : true))
-    .map((script) => script.grade)
-    .filter((grade): grade is number => grade !== null);
+function getOrCreateGrades<K>(map: Map<K, number[]>, key: K): number[] {
+  const grades = map.get(key);
+
+  if (grades) {
+    return grades;
+  }
+
+  const createdGrades: number[] = [];
+  map.set(key, createdGrades);
+  return createdGrades;
+}
+
+function buildDistributionBuckets(
+  scripts: DistributionScriptRecord[],
+  currentAssessmentId: string,
+  currentMarkerAssignments: {
+    userId: string;
+    user: {
+      id: string;
+      name: string | null;
+      email: string | null;
+    };
+  }[]
+) {
+  const markerSlots = new Map<string, { markerId: string; markerName: string }>();
+  const gradesByInstance = new Map<string, number[]>();
+  const gradesByInstanceAndMarker = new Map<string, Map<string, number[]>>();
+
+  for (const assignment of currentMarkerAssignments) {
+    markerSlots.set(assignment.user.id, {
+      markerId: assignment.user.id,
+      markerName: getDisplayName(assignment.user),
+    });
+  }
+
+  for (const script of scripts) {
+    if (script.grade === null || !script.allocation) {
+      continue;
+    }
+
+    getOrCreateGrades(gradesByInstance, script.assessmentInstanceId).push(script.grade);
+
+    let markerGradesByInstance = gradesByInstanceAndMarker.get(script.assessmentInstanceId);
+
+    if (!markerGradesByInstance) {
+      markerGradesByInstance = new Map<string, number[]>();
+      gradesByInstanceAndMarker.set(script.assessmentInstanceId, markerGradesByInstance);
+    }
+
+    getOrCreateGrades(markerGradesByInstance, script.allocation.markerUserId).push(script.grade);
+
+    if (script.assessmentInstanceId === currentAssessmentId) {
+      const marker = script.allocation.marker;
+
+      markerSlots.set(marker.id, {
+        markerId: marker.id,
+        markerName: getDisplayName(marker),
+      });
+    }
+  }
+
+  return {
+    markerSlots,
+    gradesByInstance,
+    gradesByInstanceAndMarker,
+  };
 }
 
 function buildDistributionSeries(input: {
@@ -91,31 +153,6 @@ export default async function AssessmentDistributionPage({ params }: Distributio
           module: true,
         },
       },
-      scripts: {
-        where: {
-          grade: {
-            not: null,
-          },
-          allocation: {
-            isNot: null,
-          },
-        },
-        select: {
-          grade: true,
-          allocation: {
-            select: {
-              markerUserId: true,
-              marker: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                },
-              },
-            },
-          },
-        },
-      },
       moderatorUser: {
         select: {
           id: true,
@@ -164,27 +201,33 @@ export default async function AssessmentDistributionPage({ params }: Distributio
       id: true,
       academicYear: true,
       dueAt: true,
-      scripts: {
-        where: {
-          grade: {
-            not: null,
-          },
-          allocation: {
-            isNot: null,
-          },
-        },
+    },
+  });
+
+  const relatedInstanceIds = relatedInstances.map((instance) => instance.id);
+  const scripts = await prisma.script.findMany({
+    where: {
+      assessmentInstanceId: {
+        in: relatedInstanceIds,
+      },
+      grade: {
+        not: null,
+      },
+      allocation: {
+        isNot: null,
+      },
+    },
+    select: {
+      assessmentInstanceId: true,
+      grade: true,
+      allocation: {
         select: {
-          grade: true,
-          allocation: {
+          markerUserId: true,
+          marker: {
             select: {
-              markerUserId: true,
-              marker: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                },
-              },
+              id: true,
+              name: true,
+              email: true,
             },
           },
         },
@@ -192,32 +235,17 @@ export default async function AssessmentDistributionPage({ params }: Distributio
     },
   });
 
-  const currentMarkerSlots = new Map<string, { markerId: string; markerName: string }>();
+  const { markerSlots, gradesByInstance, gradesByInstanceAndMarker } = buildDistributionBuckets(
+    scripts,
+    assessment.id,
+    assessment.markerAssignments
+  );
 
-  for (const assignment of assessment.markerAssignments) {
-    currentMarkerSlots.set(assignment.user.id, {
-      markerId: assignment.user.id,
-      markerName: getDisplayName(assignment.user),
-    });
-  }
-
-  for (const script of assessment.scripts) {
-    const marker = script.allocation?.marker;
-
-    if (!marker) {
-      continue;
-    }
-
-    currentMarkerSlots.set(marker.id, {
-      markerId: marker.id,
-      markerName: getDisplayName(marker),
-    });
-  }
-
-  const sortedMarkerSlots = Array.from(currentMarkerSlots.values()).sort((left, right) =>
+  const sortedMarkerSlots = Array.from(markerSlots.values()).sort((left, right) =>
     left.markerName.localeCompare(right.markerName)
   );
   const currentInstanceDistributions = new Map<string, DistributionSeries>();
+  const currentAssessmentGrades = gradesByInstance.get(assessment.id) ?? [];
 
   for (const marker of sortedMarkerSlots) {
     const series = buildDistributionSeries({
@@ -225,7 +253,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
       academicYear: assessment.academicYear,
       markerId: marker.markerId,
       markerName: marker.markerName,
-      grades: extractGrades(assessment.scripts, marker.markerId),
+      grades: gradesByInstanceAndMarker.get(assessment.id)?.get(marker.markerId) ?? [],
       isCurrentYear: true,
     });
 
@@ -239,7 +267,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
     .sort((left, right) => right.dueAt.getTime() - left.dueAt.getTime());
 
   const previousDistributionYears = new Map<string, number>();
-  const markerSlots: DistributionMarkerSlot[] = sortedMarkerSlots.map((marker) => {
+  const distributionSlots: DistributionMarkerSlot[] = sortedMarkerSlots.map((marker) => {
     const previousDistributions = previousInstances
       .map((instance) => {
         return buildDistributionSeries({
@@ -247,7 +275,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
           academicYear: instance.academicYear,
           markerId: marker.markerId,
           markerName: marker.markerName,
-          grades: extractGrades(instance.scripts, marker.markerId),
+          grades: gradesByInstanceAndMarker.get(instance.id)?.get(marker.markerId) ?? [],
           isCurrentYear: false,
         });
       })
@@ -273,7 +301,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
     academicYear: assessment.academicYear,
     markerId: OVERALL_MARKER_ID,
     markerName: OVERALL_MARKER_NAME,
-    grades: extractGrades(assessment.scripts),
+    grades: currentAssessmentGrades,
     isCurrentYear: true,
   });
   const overallPreviousDistributions = previousInstances
@@ -283,7 +311,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
         academicYear: instance.academicYear,
         markerId: OVERALL_MARKER_ID,
         markerName: OVERALL_MARKER_NAME,
-        grades: extractGrades(instance.scripts),
+        grades: gradesByInstance.get(instance.id) ?? [],
         isCurrentYear: false,
       })
     )
@@ -297,7 +325,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
   }
 
   if (overallCurrentDistribution || overallPreviousDistributions.length > 0) {
-    markerSlots.push({
+    distributionSlots.push({
       markerId: OVERALL_MARKER_ID,
       markerName: OVERALL_MARKER_NAME,
       currentDistribution: overallCurrentDistribution,
@@ -310,10 +338,10 @@ export default async function AssessmentDistributionPage({ params }: Distributio
       academicYear: instance.academicYear,
       distributionCount: previousDistributionYears.get(instance.academicYear) ?? 0,
     }))
-    .filter(
-      (year, index, years) =>
-        year.distributionCount > 0 &&
-        years.findIndex((candidate) => candidate.academicYear === year.academicYear) === index
+      .filter(
+        (year, index, years) =>
+          year.distributionCount > 0 &&
+          years.findIndex((candidate) => candidate.academicYear === year.academicYear) === index
     );
 
   return (
@@ -335,7 +363,7 @@ export default async function AssessmentDistributionPage({ params }: Distributio
         assessmentName={assessment.assessmentTemplate.name}
         academicYear={assessment.academicYear}
         isArchived={isArchived}
-        slots={markerSlots}
+        slots={distributionSlots}
         previousYears={previousYears}
       />
     </>

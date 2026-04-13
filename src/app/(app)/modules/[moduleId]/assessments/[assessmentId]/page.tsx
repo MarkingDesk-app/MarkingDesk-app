@@ -58,9 +58,12 @@ type AssessmentShellData = {
   markedScriptCount: number;
   myAllocatedScriptCount: number;
   myMarkedScriptCount: number;
-  existingTurnitinIds: string[];
   currentUserCanMarkAll: boolean;
 };
+
+function buildMarkerCountMap(rows: { markerUserId: string; _count: { _all: number } }[]) {
+  return new Map(rows.map((row) => [row.markerUserId, row._count._all]));
+}
 
 function formatDateTime(date: Date | null): string {
   if (!date) {
@@ -105,7 +108,8 @@ async function getAssessmentShellData({
   currentUserId: string;
   role: Role;
 }): Promise<AssessmentShellData> {
-  const [assessment, moduleMemberships] = await Promise.all([
+  const [assessment, moduleMemberships, markedScriptCount, allocatedScriptCounts, markedAllocatedScriptCounts] =
+    await Promise.all([
     prisma.assessmentInstance.findUnique({
       where: { id: assessmentId },
       select: {
@@ -147,15 +151,9 @@ async function getAssessmentShellData({
             },
           },
         },
-        scripts: {
+        _count: {
           select: {
-            turnitinId: true,
-            grade: true,
-            allocation: {
-              select: {
-                markerUserId: true,
-              },
-            },
+            scripts: true,
           },
         },
       },
@@ -172,6 +170,39 @@ async function getAssessmentShellData({
         },
       },
       orderBy: [{ isLeader: "desc" }, { user: { name: "asc" } }, { user: { email: "asc" } }],
+    }),
+    prisma.script.count({
+      where: {
+        assessmentInstanceId: assessmentId,
+        grade: { not: null },
+      },
+    }),
+    prisma.allocation.groupBy({
+      by: ["markerUserId"],
+      where: {
+        script: {
+          is: {
+            assessmentInstanceId: assessmentId,
+          },
+        },
+      },
+      _count: {
+        _all: true,
+      },
+    }),
+    prisma.allocation.groupBy({
+      by: ["markerUserId"],
+      where: {
+        script: {
+          is: {
+            assessmentInstanceId: assessmentId,
+            grade: { not: null },
+          },
+        },
+      },
+      _count: {
+        _all: true,
+      },
     }),
   ]);
 
@@ -210,34 +241,26 @@ async function getAssessmentShellData({
       .filter(Boolean)
       .join(" · ") || undefined,
   }));
-  const markerNameById = new Map(markerOptions.map((marker) => [marker.id, marker.name]));
-  const markerProgressById = assessment.scripts.reduce<Map<string, Omit<MarkerProgressSummary, "remainingScripts" | "progressPercentage">>>(
-    (progressByMarkerId, script) => {
-      const markerUserId = script.allocation?.markerUserId;
+  const allocatedScriptCountByMarkerId = buildMarkerCountMap(allocatedScriptCounts);
+  const markedAllocatedScriptCountByMarkerId = buildMarkerCountMap(markedAllocatedScriptCounts);
+  const markerProgress = markerOptions
+    .map((marker) => {
+      const allocatedScripts = allocatedScriptCountByMarkerId.get(marker.id) ?? 0;
 
-      if (!markerUserId) {
-        return progressByMarkerId;
+      if (allocatedScripts === 0) {
+        return null;
       }
 
-      const currentMarkerProgress = progressByMarkerId.get(markerUserId) ?? {
-        markerId: markerUserId,
-        markerName: markerNameById.get(markerUserId) ?? "Unknown marker",
-        allocatedScripts: 0,
-        markedScripts: 0,
+      const markedScripts = markedAllocatedScriptCountByMarkerId.get(marker.id) ?? 0;
+
+      return {
+        markerId: marker.id,
+        markerName: marker.name,
+        allocatedScripts,
+        markedScripts,
       };
-
-      currentMarkerProgress.allocatedScripts += 1;
-
-      if (script.grade !== null) {
-        currentMarkerProgress.markedScripts += 1;
-      }
-
-      progressByMarkerId.set(markerUserId, currentMarkerProgress);
-      return progressByMarkerId;
-    },
-    new Map()
-  );
-  const markerProgress = Array.from(markerProgressById.values())
+    })
+    .filter((marker): marker is Omit<MarkerProgressSummary, "remainingScripts" | "progressPercentage"> => marker !== null)
     .map((marker) => ({
       ...marker,
       remainingScripts: marker.allocatedScripts - marker.markedScripts,
@@ -245,14 +268,9 @@ async function getAssessmentShellData({
         marker.allocatedScripts === 0 ? 0 : Math.round((marker.markedScripts / marker.allocatedScripts) * 100),
     }))
     .sort((left, right) => left.markerName.localeCompare(right.markerName));
-  const totalScriptCount = assessment.scripts.length;
-  const markedScriptCount = assessment.scripts.filter((script) => script.grade !== null).length;
-  const myAllocatedScriptCount = assessment.scripts.filter(
-    (script) => script.allocation?.markerUserId === currentUserId
-  ).length;
-  const myMarkedScriptCount = assessment.scripts.filter(
-    (script) => script.allocation?.markerUserId === currentUserId && script.grade !== null
-  ).length;
+  const totalScriptCount = assessment._count.scripts;
+  const myAllocatedScriptCount = allocatedScriptCountByMarkerId.get(currentUserId) ?? 0;
+  const myMarkedScriptCount = markedAllocatedScriptCountByMarkerId.get(currentUserId) ?? 0;
 
   return {
     moduleId,
@@ -298,7 +316,6 @@ async function getAssessmentShellData({
     markedScriptCount,
     myAllocatedScriptCount,
     myMarkedScriptCount,
-    existingTurnitinIds: assessment.scripts.map((script) => script.turnitinId),
     currentUserCanMarkAll,
   };
 }
@@ -440,7 +457,6 @@ export default async function AssessmentPage({ params }: AssessmentPageProps) {
         markingDeadlineAtInput={shellData.markingDeadlineAtInput}
         currentModeratorUserId={shellData.currentModeratorUserId}
         currentMarkerUserIds={shellData.currentMarkerUserIds}
-        existingTurnitinIds={shellData.existingTurnitinIds}
         totalScriptCount={shellData.totalScriptCount}
         markedScriptCount={shellData.markedScriptCount}
         myAllocatedScriptCount={shellData.myAllocatedScriptCount}

@@ -55,16 +55,6 @@ type AssessmentSummary = {
   instances: AssessmentInstanceSummary[];
 };
 
-type ArchivedAssessmentSummary = {
-  id: string;
-  name: string;
-  archivedAt: string;
-  archivedBy: string;
-  totalScripts: number;
-  totalMarkedScripts: number;
-  instances: AssessmentInstanceSummary[];
-};
-
 type ModulePageClientProps = {
   moduleId: string;
   moduleCode: string;
@@ -73,7 +63,6 @@ type ModulePageClientProps = {
   currentUserIsLeader: boolean;
   moduleLeaders: ModuleLeader[];
   assessments: AssessmentSummary[];
-  archivedAssessments: ArchivedAssessmentSummary[];
 };
 
 type Feedback = {
@@ -107,7 +96,6 @@ export function ModulePageClient({
   currentUserIsLeader,
   moduleLeaders,
   assessments,
-  archivedAssessments,
 }: ModulePageClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -477,78 +465,6 @@ export function ModulePageClient({
           </div>
         )}
       </section>
-
-      {canManageModule ? (
-        <section className="space-y-4">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Archived Assessments</h2>
-            <p className="mt-1 text-sm text-slate-600">Archived assessments remain available here for audit purposes.</p>
-          </div>
-
-          {archivedAssessments.length === 0 ? (
-            <Card>
-              <CardContent className="p-8 text-sm text-slate-600">No archived assessments.</CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
-              {archivedAssessments.map((assessment) => (
-                <Card key={assessment.id} className="overflow-hidden border-slate-200 bg-slate-50/70">
-                  <CardHeader className="flex flex-row items-start justify-between gap-4">
-                    <div>
-                      <CardTitle className="text-xl text-slate-900">{assessment.name}</CardTitle>
-                      <p className="mt-1 text-sm text-slate-600">
-                        {assessment.instances.length} academic year{assessment.instances.length === 1 ? "" : "s"}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700">
-                      Archived
-                    </span>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-1 text-sm text-slate-600">
-                      <p>Archived on {assessment.archivedAt}</p>
-                      <p>Archived by {assessment.archivedBy}</p>
-                      <p>
-                        {assessment.totalMarkedScripts}/{assessment.totalScripts} scripts marked
-                      </p>
-                    </div>
-
-                    <div className="space-y-3">
-                      {assessment.instances.map((instance) => (
-                        <Link
-                          key={instance.id}
-                          href={`/modules/${moduleId}/assessments/${instance.id}`}
-                          className="group flex items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white/85 px-4 py-4 transition hover:border-slate-300 hover:bg-white"
-                        >
-                          <div className="space-y-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-base font-semibold text-slate-950">{instance.academicYear}</p>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-                                {instance.markedScripts}/{instance.totalScripts} marked
-                              </span>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-                                {instance.teamMembers.length} marker{instance.teamMembers.length === 1 ? "" : "s"}
-                              </span>
-                            </div>
-                            <div className="space-y-1 text-sm text-slate-600">
-                              <p>Due {instance.dueAt}</p>
-                              <p>Deadline {instance.markingDeadlineAt}</p>
-                              <p>
-                                Moderator: {instance.moderatorName ?? "Not assigned"} · {instance.moderationStatus}
-                              </p>
-                            </div>
-                          </div>
-                          <ChevronRight className="h-5 w-5 shrink-0 text-slate-400 transition group-hover:text-slate-700" />
-                        </Link>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </section>
-      ) : null}
 
       <ModalShell
         open={showAssessmentModal}

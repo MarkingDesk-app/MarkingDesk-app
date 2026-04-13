@@ -1,4 +1,7 @@
+import { Suspense } from "react";
+
 import { ModulePageClient } from "./module-page-client";
+import { ModulePageArchivedAssessments } from "./module-page-archived-assessments";
 import { formatModerationStatus } from "@/lib/assessment-utils";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
@@ -136,53 +139,7 @@ export async function ModulePageContent({
     },
   });
 
-  const archivedAssessmentTemplates = canManageModule
-    ? await prisma.assessmentTemplate.findMany({
-        where: {
-          moduleId,
-          isArchived: true,
-        },
-        orderBy: { name: "asc" },
-        include: {
-          archivedBy: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-          assessmentInstances: {
-            orderBy: { academicYear: "desc" },
-            include: {
-              markerAssignments: {
-                where: {
-                  active: true,
-                },
-                include: {
-                  user: {
-                    select: userSummarySelect,
-                  },
-                },
-              },
-              moderatorUser: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                },
-              },
-              _count: {
-                select: {
-                  scripts: true,
-                },
-              },
-            },
-          },
-        },
-      })
-    : [];
-
-  const allInstanceIds = [...assessmentTemplates, ...archivedAssessmentTemplates].flatMap((template) =>
+  const allInstanceIds = assessmentTemplates.flatMap((template) =>
     template.assessmentInstances.map((instance) => instance.id)
   );
   const markedScriptCounts = allInstanceIds.length
@@ -200,68 +157,61 @@ export async function ModulePageContent({
   const markedScriptCountByInstanceId = buildMarkedCountMap(markedScriptCounts);
 
   return (
-    <ModulePageClient
-      moduleId={moduleId}
-      moduleCode={moduleCode}
-      moduleTitle={moduleTitle}
-      canManageModule={canManageModule}
-      currentUserIsLeader={currentUserIsLeader}
-      moduleLeaders={moduleLeaders.map((membership) => ({
-        id: membership.id,
-        userId: membership.user.id,
-        displayName: getDisplayName(membership.user),
-        email: membership.user.email ?? "",
-        meta: membership.user.passwordHash && membership.user.emailVerified ? undefined : "Invitation pending",
-      }))}
-      assessments={assessmentTemplates.map((template) => ({
-        id: template.id,
-        name: template.name,
-        instances: template.assessmentInstances.map((instance) => ({
-          id: instance.id,
-          label: `${template.name} / ${instance.academicYear}`,
-          academicYear: instance.academicYear,
-          dueAt: formatDateTime(instance.dueAt),
-          markingDeadlineAt: formatDateTime(instance.markingDeadlineAt),
-          moderatorName: instance.moderatorUser ? getDisplayName(instance.moderatorUser) : null,
-          moderationStatus: formatModerationStatus(instance.moderationStatus),
-          totalScripts: instance._count.scripts,
-          markedScripts: markedScriptCountByInstanceId.get(instance.id) ?? 0,
-          teamMembers: instance.markerAssignments.map((assignment) => ({
-            userId: assignment.user.id,
-            displayName: getDisplayName(assignment.user),
-            email: assignment.user.email ?? "",
-            meta: assignment.user.passwordHash && assignment.user.emailVerified ? undefined : "Invitation pending",
+    <>
+      <ModulePageClient
+        moduleId={moduleId}
+        moduleCode={moduleCode}
+        moduleTitle={moduleTitle}
+        canManageModule={canManageModule}
+        currentUserIsLeader={currentUserIsLeader}
+        moduleLeaders={moduleLeaders.map((membership) => ({
+          id: membership.id,
+          userId: membership.user.id,
+          displayName: getDisplayName(membership.user),
+          email: membership.user.email ?? "",
+          meta: membership.user.passwordHash && membership.user.emailVerified ? undefined : "Invitation pending",
+        }))}
+        assessments={assessmentTemplates.map((template) => ({
+          id: template.id,
+          name: template.name,
+          instances: template.assessmentInstances.map((instance) => ({
+            id: instance.id,
+            label: `${template.name} / ${instance.academicYear}`,
+            academicYear: instance.academicYear,
+            dueAt: formatDateTime(instance.dueAt),
+            markingDeadlineAt: formatDateTime(instance.markingDeadlineAt),
+            moderatorName: instance.moderatorUser ? getDisplayName(instance.moderatorUser) : null,
+            moderationStatus: formatModerationStatus(instance.moderationStatus),
+            totalScripts: instance._count.scripts,
+            markedScripts: markedScriptCountByInstanceId.get(instance.id) ?? 0,
+            teamMembers: instance.markerAssignments.map((assignment) => ({
+              userId: assignment.user.id,
+              displayName: getDisplayName(assignment.user),
+              email: assignment.user.email ?? "",
+              meta: assignment.user.passwordHash && assignment.user.emailVerified ? undefined : "Invitation pending",
+            })),
           })),
-        })),
-      }))}
-      archivedAssessments={archivedAssessmentTemplates.map((template) => ({
-        id: template.id,
-        name: template.name,
-        archivedAt: template.archivedAt ? formatDateTime(template.archivedAt) : "Not set",
-        archivedBy: template.archivedBy ? getDisplayName(template.archivedBy) : "Unknown",
-        totalScripts: template.assessmentInstances.reduce((sum, instance) => sum + instance._count.scripts, 0),
-        totalMarkedScripts: template.assessmentInstances.reduce(
-          (sum, instance) => sum + (markedScriptCountByInstanceId.get(instance.id) ?? 0),
-          0
-        ),
-        instances: template.assessmentInstances.map((instance) => ({
-          id: instance.id,
-          label: `${template.name} / ${instance.academicYear}`,
-          academicYear: instance.academicYear,
-          dueAt: formatDateTime(instance.dueAt),
-          markingDeadlineAt: formatDateTime(instance.markingDeadlineAt),
-          moderatorName: instance.moderatorUser ? getDisplayName(instance.moderatorUser) : null,
-          moderationStatus: formatModerationStatus(instance.moderationStatus),
-          totalScripts: instance._count.scripts,
-          markedScripts: markedScriptCountByInstanceId.get(instance.id) ?? 0,
-          teamMembers: instance.markerAssignments.map((assignment) => ({
-            userId: assignment.user.id,
-            displayName: getDisplayName(assignment.user),
-            email: assignment.user.email ?? "",
-            meta: assignment.user.passwordHash && assignment.user.emailVerified ? undefined : "Invitation pending",
-          })),
-        })),
-      }))}
-    />
+        }))}
+      />
+      {canManageModule ? (
+        <Suspense
+          fallback={
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Archived Assessments</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Archived assessments remain available here for audit purposes.
+                </p>
+              </div>
+              <div className="rounded-[24px] border border-slate-200/80 bg-white/85 p-8 text-sm text-slate-600">
+                Loading archived assessments...
+              </div>
+            </section>
+          }
+        >
+          <ModulePageArchivedAssessments moduleId={moduleId} />
+        </Suspense>
+      ) : null}
+    </>
   );
 }

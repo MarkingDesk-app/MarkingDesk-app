@@ -87,22 +87,32 @@ export async function replaceAssessmentMarkerAssignments(input: {
     });
   }
 
-  for (const userId of markerUserIds) {
-    await prisma.assessmentMarker.upsert({
+  const existingUserIdSet = new Set(existingAssignments.map((assignment) => assignment.userId));
+  const reactivatedUserIds = markerUserIds.filter((userId) => existingUserIdSet.has(userId));
+  const newUserIds = markerUserIds.filter((userId) => !existingUserIdSet.has(userId));
+
+  if (reactivatedUserIds.length > 0) {
+    await prisma.assessmentMarker.updateMany({
       where: {
-        assessmentInstanceId_userId: {
-          assessmentInstanceId: input.assessmentId,
-          userId,
+        assessmentInstanceId: input.assessmentId,
+        userId: {
+          in: reactivatedUserIds,
         },
       },
-      update: {
+      data: {
         active: true,
       },
-      create: {
+    });
+  }
+
+  if (newUserIds.length > 0) {
+    await prisma.assessmentMarker.createMany({
+      data: newUserIds.map((userId) => ({
         assessmentInstanceId: input.assessmentId,
         userId,
         active: true,
-      },
+      })),
+      skipDuplicates: true,
     });
   }
 

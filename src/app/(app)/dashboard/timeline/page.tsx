@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft, ArrowRight } from "lucide-react";
+import { Prisma } from "@prisma/client";
 
 import { PageBreadcrumbs } from "@/components/breadcrumb-context";
 import { Button } from "@/components/ui/button";
@@ -129,102 +130,112 @@ export default async function DashboardTimelinePage({ searchParams }: DashboardT
   const yearParam = Array.isArray(resolvedSearchParams.year)
     ? resolvedSearchParams.year[0]
     : resolvedSearchParams.year;
-
-  const assessments = await prisma.assessmentInstance.findMany({
-    where: {
-      assessmentTemplate: {
-        isArchived: false,
-      },
-      OR: [
-        {
-          moderatorUserId: session.user.id,
-        },
-        {
-          markerAssignments: {
-            some: {
-              userId: session.user.id,
-              active: true,
-            },
-          },
-        },
-      ],
-    },
-    orderBy: [{ dueAt: "asc" }, { markingDeadlineAt: "asc" }],
-    select: {
-      id: true,
-      academicYear: true,
-      dueAt: true,
-      markingDeadlineAt: true,
-      moderatorUserId: true,
-      markerAssignments: {
-        where: {
-          userId: session.user.id,
-          active: true,
-        },
-        select: {
-          id: true,
-        },
-      },
-      assessmentTemplate: {
-        select: {
-          name: true,
-          module: {
-            select: {
-              id: true,
-              code: true,
-              title: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
   const currentAcademicYear = getCurrentAcademicYearLabel(new Date());
   const selectedAcademicYear = yearParam && parseAcademicYearStart(yearParam) ? yearParam : currentAcademicYear;
-  const availableAcademicYears = Array.from(new Set(assessments.map((assessment) => assessment.academicYear))).sort(
-    (left, right) => (parseAcademicYearStart(right) ?? 0) - (parseAcademicYearStart(left) ?? 0)
-  );
+  const assessmentAccessWhere: Prisma.AssessmentInstanceWhereInput = {
+    assessmentTemplate: {
+      isArchived: false,
+    },
+    OR: [
+      {
+        moderatorUserId: session.user.id,
+      },
+      {
+        markerAssignments: {
+          some: {
+            userId: session.user.id,
+            active: true,
+          },
+        },
+      },
+    ],
+  } as const;
+
+  const [availableAcademicYearRows, assessments] = await Promise.all([
+    prisma.assessmentInstance.findMany({
+      where: assessmentAccessWhere,
+      select: {
+        academicYear: true,
+      },
+      distinct: ["academicYear"],
+    }),
+    prisma.assessmentInstance.findMany({
+      where: {
+        ...assessmentAccessWhere,
+        academicYear: selectedAcademicYear,
+      },
+      orderBy: [{ dueAt: "asc" }, { markingDeadlineAt: "asc" }],
+      select: {
+        id: true,
+        dueAt: true,
+        markingDeadlineAt: true,
+        moderatorUserId: true,
+        _count: {
+          select: {
+            markerAssignments: {
+              where: {
+                userId: session.user.id,
+                active: true,
+              },
+            },
+          },
+        },
+        assessmentTemplate: {
+          select: {
+            name: true,
+            module: {
+              select: {
+                id: true,
+                code: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const availableAcademicYears = availableAcademicYearRows
+    .map((row) => row.academicYear)
+    .sort((left, right) => (parseAcademicYearStart(right) ?? 0) - (parseAcademicYearStart(left) ?? 0));
   const { start: timelineStart, end: timelineEnd } = getAcademicYearWindow(selectedAcademicYear);
   const monthColumns = buildMonthColumns(selectedAcademicYear);
 
-  const rows = assessments
-    .filter((assessment) => assessment.academicYear === selectedAcademicYear)
-    .flatMap((assessment) => {
-      const position = getTimelinePosition(assessment.dueAt, assessment.markingDeadlineAt, timelineStart, timelineEnd);
-      const rowsForAssessment: TimelineRow[] = [];
-      const dateSpanLabel = formatDateSpan(assessment.dueAt, assessment.markingDeadlineAt);
+  const rows = assessments.flatMap((assessment) => {
+    const position = getTimelinePosition(assessment.dueAt, assessment.markingDeadlineAt, timelineStart, timelineEnd);
+    const rowsForAssessment: TimelineRow[] = [];
+    const dateSpanLabel = formatDateSpan(assessment.dueAt, assessment.markingDeadlineAt);
 
-      if (assessment.markerAssignments.length > 0) {
-        rowsForAssessment.push({
-          id: `${assessment.id}:marker`,
-          assessmentId: assessment.id,
-          moduleId: assessment.assessmentTemplate.module.id,
-          moduleCode: assessment.assessmentTemplate.module.code,
-          assessmentName: assessment.assessmentTemplate.name,
-          dateSpanLabel,
-          rowKind: "marker",
-          leftPercentage: position.leftPercentage,
-          widthPercentage: position.widthPercentage,
-        });
-      }
+    if (assessment._count.markerAssignments > 0) {
+      rowsForAssessment.push({
+        id: `${assessment.id}:marker`,
+        assessmentId: assessment.id,
+        moduleId: assessment.assessmentTemplate.module.id,
+        moduleCode: assessment.assessmentTemplate.module.code,
+        assessmentName: assessment.assessmentTemplate.name,
+        dateSpanLabel,
+        rowKind: "marker",
+        leftPercentage: position.leftPercentage,
+        widthPercentage: position.widthPercentage,
+      });
+    }
 
-      if (assessment.moderatorUserId === session.user.id) {
-        rowsForAssessment.push({
-          id: `${assessment.id}:moderator`,
-          assessmentId: assessment.id,
-          moduleId: assessment.assessmentTemplate.module.id,
-          moduleCode: assessment.assessmentTemplate.module.code,
-          assessmentName: assessment.assessmentTemplate.name,
-          dateSpanLabel,
-          rowKind: "moderator",
-          leftPercentage: position.leftPercentage,
-          widthPercentage: position.widthPercentage,
-        });
-      }
+    if (assessment.moderatorUserId === session.user.id) {
+      rowsForAssessment.push({
+        id: `${assessment.id}:moderator`,
+        assessmentId: assessment.id,
+        moduleId: assessment.assessmentTemplate.module.id,
+        moduleCode: assessment.assessmentTemplate.module.code,
+        assessmentName: assessment.assessmentTemplate.name,
+        dateSpanLabel,
+        rowKind: "moderator",
+        leftPercentage: position.leftPercentage,
+        widthPercentage: position.widthPercentage,
+      });
+    }
 
-      return rowsForAssessment;
-    });
+    return rowsForAssessment;
+  });
 
   const hasAssignmentsInOtherYears = availableAcademicYears.length > 0;
 

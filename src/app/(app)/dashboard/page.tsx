@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -29,9 +29,8 @@ function summarizeModule(module: {
   id: string;
   code: string;
   title: string;
-  memberships: { userId: string; isLeader: boolean; user: { id: string; name: string; email: string | null } }[];
+  memberships: { userId: string; isLeader: boolean; user: { name: string; email: string | null } }[];
   assessmentTemplates: {
-    id: string;
     assessmentInstances: {
       id: string;
       dueAt: Date;
@@ -76,13 +75,30 @@ function summarizeModule(module: {
   };
 }
 
-function buildCountMap(rows: { assessmentInstanceId: string; _count: { _all: number } }[]) {
-  return new Map(rows.map((row) => [row.assessmentInstanceId, row._count._all]));
-}
+type AssessmentInstanceCountRow = {
+  assessmentInstanceId: string;
+  totalScripts: number;
+  markedScripts: number;
+  myAllocatedScripts: number;
+  myMarkedScripts: number;
+};
 
 async function getDashboardModules(userId: string, role: Role) {
   const currentAcademicYear = getCurrentAcademicYearLabel(new Date());
-  const includeConfig = {
+  const assessmentTemplateWhere = {
+    isArchived: false,
+    assessmentInstances: {
+      some: {
+        academicYear: currentAcademicYear,
+      },
+    },
+  } as const;
+  const assessmentInstanceSelect = {
+    id: true,
+    dueAt: true,
+    moderatorUserId: true,
+  } as const;
+  const moduleIncludeConfig = {
     memberships: {
       where: { active: true, isLeader: true },
       select: {
@@ -90,7 +106,6 @@ async function getDashboardModules(userId: string, role: Role) {
         isLeader: true,
         user: {
           select: {
-            id: true,
             name: true,
             email: true,
           },
@@ -98,29 +113,13 @@ async function getDashboardModules(userId: string, role: Role) {
       },
     },
     assessmentTemplates: {
-      where: {
-        isArchived: false,
-        assessmentInstances: {
-          some: {
-            academicYear: currentAcademicYear,
-          },
-        },
-      },
-      include: {
+      where: assessmentTemplateWhere,
+      select: {
         assessmentInstances: {
           where: {
             academicYear: currentAcademicYear,
           },
-          select: {
-            id: true,
-            dueAt: true,
-            moderatorUserId: true,
-            _count: {
-              select: {
-                scripts: true,
-              },
-            },
-          },
+          select: assessmentInstanceSelect,
         },
       },
     },
@@ -174,7 +173,7 @@ async function getDashboardModules(userId: string, role: Role) {
               },
             ],
           },
-    include: includeConfig,
+    include: moduleIncludeConfig,
     orderBy: { code: "asc" },
   });
 
@@ -182,57 +181,24 @@ async function getDashboardModules(userId: string, role: Role) {
     module.assessmentTemplates.flatMap((template) => template.assessmentInstances.map((instance) => instance.id))
   );
 
-  let markedCounts: { assessmentInstanceId: string; _count: { _all: number } }[] = [];
-  let myAllocationCounts: { assessmentInstanceId: string; _count: { _all: number } }[] = [];
-  let myMarkedCounts: { assessmentInstanceId: string; _count: { _all: number } }[] = [];
+  let countRows: AssessmentInstanceCountRow[] = [];
 
   if (instanceIds.length) {
-    [markedCounts, myAllocationCounts, myMarkedCounts] = await Promise.all([
-      prisma.script.groupBy({
-        by: ["assessmentInstanceId"],
-        where: {
-          assessmentInstanceId: { in: instanceIds },
-          grade: { not: null },
-        },
-        _count: {
-          _all: true,
-        },
-      }),
-      prisma.script.groupBy({
-        by: ["assessmentInstanceId"],
-        where: {
-          assessmentInstanceId: { in: instanceIds },
-          allocation: {
-            is: {
-              markerUserId: userId,
-            },
-          },
-        },
-        _count: {
-          _all: true,
-        },
-      }),
-      prisma.script.groupBy({
-        by: ["assessmentInstanceId"],
-        where: {
-          assessmentInstanceId: { in: instanceIds },
-          grade: { not: null },
-          allocation: {
-            is: {
-              markerUserId: userId,
-            },
-          },
-        },
-        _count: {
-          _all: true,
-        },
-      }),
-    ]);
+    countRows = await prisma.$queryRaw<AssessmentInstanceCountRow[]>(Prisma.sql`
+      SELECT
+        s."assessmentInstanceId" AS "assessmentInstanceId",
+        COUNT(*)::int AS "totalScripts",
+        COUNT(*) FILTER (WHERE s."grade" IS NOT NULL)::int AS "markedScripts",
+        COUNT(*) FILTER (WHERE a."markerUserId" = ${userId})::int AS "myAllocatedScripts",
+        COUNT(*) FILTER (WHERE s."grade" IS NOT NULL AND a."markerUserId" = ${userId})::int AS "myMarkedScripts"
+      FROM "Script" AS s
+      LEFT JOIN "Allocation" AS a ON a."scriptId" = s."id"
+      WHERE s."assessmentInstanceId" IN (${Prisma.join(instanceIds)})
+      GROUP BY s."assessmentInstanceId"
+    `);
   }
 
-  const markedCountByInstanceId = buildCountMap(markedCounts);
-  const myAllocationCountByInstanceId = buildCountMap(myAllocationCounts);
-  const myMarkedCountByInstanceId = buildCountMap(myMarkedCounts);
+  const countByInstanceId = new Map(countRows.map((row) => [row.assessmentInstanceId, row]));
 
   return modules.map((module) =>
     summarizeModule(
@@ -244,10 +210,10 @@ async function getDashboardModules(userId: string, role: Role) {
             id: instance.id,
             dueAt: instance.dueAt,
             moderatorUserId: instance.moderatorUserId,
-            totalScripts: instance._count.scripts,
-            markedScripts: markedCountByInstanceId.get(instance.id) ?? 0,
-            myAllocatedScripts: myAllocationCountByInstanceId.get(instance.id) ?? 0,
-            myMarkedScripts: myMarkedCountByInstanceId.get(instance.id) ?? 0,
+            totalScripts: countByInstanceId.get(instance.id)?.totalScripts ?? 0,
+            markedScripts: countByInstanceId.get(instance.id)?.markedScripts ?? 0,
+            myAllocatedScripts: countByInstanceId.get(instance.id)?.myAllocatedScripts ?? 0,
+            myMarkedScripts: countByInstanceId.get(instance.id)?.myMarkedScripts ?? 0,
           })),
         })),
       },

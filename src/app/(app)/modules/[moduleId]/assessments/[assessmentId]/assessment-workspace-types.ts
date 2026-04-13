@@ -60,7 +60,6 @@ export type AssessmentWorkspaceShellProps = {
   markingDeadlineAtInput: string;
   currentModeratorUserId: string;
   currentMarkerUserIds: string[];
-  existingTurnitinIds: string[];
   totalScriptCount: number;
   markedScriptCount: number;
   myAllocatedScriptCount: number;

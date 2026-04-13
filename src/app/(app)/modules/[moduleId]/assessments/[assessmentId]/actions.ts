@@ -652,18 +652,24 @@ export async function autoAssignUnallocatedScriptsAction(input: {
 
     const assignmentMap = buildBalancedAssignments(unallocatedScriptIds, markerIds, existingCounts);
 
-    for (const scriptId of unallocatedScriptIds) {
+    const allocationsToCreate = unallocatedScriptIds.flatMap((scriptId) => {
       const markerUserId = assignmentMap[scriptId];
 
       if (!markerUserId) {
-        continue;
+        return [];
       }
 
-      await prisma.allocation.create({
-        data: {
+      return [
+        {
           scriptId,
           markerUserId,
         },
+      ];
+    });
+
+    if (allocationsToCreate.length > 0) {
+      await prisma.allocation.createMany({
+        data: allocationsToCreate,
       });
     }
 
@@ -844,18 +850,21 @@ export async function assignAllocationsAction(input: {
       return { ok: false, error: "Allocation plan could not cover every submission." };
     }
 
-    for (const item of plan) {
-      await prisma.allocation.upsert({
-        where: { scriptId: item.scriptId },
-        update: {
-          markerUserId: item.markerUserId,
+    await prisma.$transaction([
+      prisma.allocation.deleteMany({
+        where: {
+          script: {
+            assessmentInstanceId: assessmentId,
+          },
         },
-        create: {
+      }),
+      prisma.allocation.createMany({
+        data: plan.map((item) => ({
           scriptId: item.scriptId,
           markerUserId: item.markerUserId,
-        },
-      });
-    }
+        })),
+      }),
+    ]);
 
     const leaderNames = assessment.assessmentTemplate.module.memberships
       .map((membership) => membership.user.name?.trim())
