@@ -1,9 +1,11 @@
 import Link from "next/link";
 
 import { ChevronRight } from "lucide-react";
+import { unstable_cache } from "next/cache";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatModerationStatus } from "@/lib/assessment-utils";
+import { getModuleArchivedAssessmentsTag } from "@/lib/cache-tags";
 import { prisma } from "@/lib/prisma";
 import { getDisplayName } from "@/lib/user-display";
 
@@ -14,6 +16,11 @@ const userSummarySelect = {
   passwordHash: true,
   emailVerified: true,
 } as const;
+
+type ArchivedMarkedScriptCount = {
+  assessmentInstanceId: string;
+  markedCount: number;
+};
 
 function formatDateTime(date: Date | null): string {
   if (!date) {
@@ -27,71 +34,90 @@ function formatDateTime(date: Date | null): string {
   }).format(date);
 }
 
-function buildMarkedCountMap(rows: { assessmentInstanceId: string; _count: { _all: number } }[]) {
-  return new Map(rows.map((row) => [row.assessmentInstanceId, row._count._all]));
-}
-
-export async function ModulePageArchivedAssessments({ moduleId }: { moduleId: string }) {
-  const archivedAssessmentTemplates = await prisma.assessmentTemplate.findMany({
-    where: {
-      moduleId,
-      isArchived: true,
-    },
-    orderBy: { name: "asc" },
-    include: {
-      archivedBy: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
+async function getArchivedAssessmentsData(moduleId: string) {
+  return unstable_cache(
+    async () => {
+      const archivedAssessmentTemplates = await prisma.assessmentTemplate.findMany({
+        where: {
+          moduleId,
+          isArchived: true,
         },
-      },
-      assessmentInstances: {
-        orderBy: { academicYear: "desc" },
+        orderBy: { name: "asc" },
         include: {
-          markerAssignments: {
-            where: {
-              active: true,
-            },
-            include: {
-              user: {
-                select: userSummarySelect,
-              },
-            },
-          },
-          moderatorUser: {
+          archivedBy: {
             select: {
               id: true,
               name: true,
               email: true,
             },
           },
-          _count: {
-            select: {
-              scripts: true,
+          assessmentInstances: {
+            orderBy: { academicYear: "desc" },
+            include: {
+              markerAssignments: {
+                where: {
+                  active: true,
+                },
+                include: {
+                  user: {
+                    select: userSummarySelect,
+                  },
+                },
+              },
+              moderatorUser: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+              _count: {
+                select: {
+                  scripts: true,
+                },
+              },
             },
           },
         },
-      },
-    },
-  });
+      });
 
-  const allInstanceIds = archivedAssessmentTemplates.flatMap((template) =>
-    template.assessmentInstances.map((instance) => instance.id)
+      const allInstanceIds = archivedAssessmentTemplates.flatMap((template) =>
+        template.assessmentInstances.map((instance) => instance.id)
+      );
+      const markedScriptCounts = allInstanceIds.length
+        ? await prisma.script.groupBy({
+            by: ["assessmentInstanceId"],
+            where: {
+              assessmentInstanceId: { in: allInstanceIds },
+              grade: { not: null },
+            },
+            _count: {
+              _all: true,
+            },
+          })
+        : [];
+
+      return {
+        archivedAssessmentTemplates,
+        markedScriptCounts: markedScriptCounts.map<ArchivedMarkedScriptCount>((row) => ({
+          assessmentInstanceId: row.assessmentInstanceId,
+          markedCount: row._count._all,
+        })),
+      };
+    },
+    ["module-archived-assessments", moduleId],
+    {
+      revalidate: 300,
+      tags: [getModuleArchivedAssessmentsTag(moduleId)],
+    }
+  )();
+}
+
+export async function ModulePageArchivedAssessments({ moduleId }: { moduleId: string }) {
+  const { archivedAssessmentTemplates, markedScriptCounts } = await getArchivedAssessmentsData(moduleId);
+  const markedScriptCountByInstanceId = new Map(
+    markedScriptCounts.map((row) => [row.assessmentInstanceId, row.markedCount])
   );
-  const markedScriptCounts = allInstanceIds.length
-    ? await prisma.script.groupBy({
-        by: ["assessmentInstanceId"],
-        where: {
-          assessmentInstanceId: { in: allInstanceIds },
-          grade: { not: null },
-        },
-        _count: {
-          _all: true,
-        },
-      })
-    : [];
-  const markedScriptCountByInstanceId = buildMarkedCountMap(markedScriptCounts);
 
   return (
     <section className="space-y-4">

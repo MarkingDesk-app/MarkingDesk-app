@@ -29,6 +29,53 @@ type SearchResponse = {
   users?: UserPickerOption[];
 };
 
+type CachedUserSearchResult = {
+  users: UserPickerOption[];
+  expiresAt: number;
+};
+
+const USER_SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const USER_SEARCH_CACHE_LIMIT = 50;
+const userSearchCache = new Map<string, CachedUserSearchResult>();
+
+function buildUserSearchCacheKey(searchUrl: string, query: string) {
+  return `${searchUrl}::${query.trim().toLowerCase()}`;
+}
+
+function readCachedUserSearch(cacheKey: string): UserPickerOption[] | null {
+  const cachedEntry = userSearchCache.get(cacheKey);
+
+  if (!cachedEntry) {
+    return null;
+  }
+
+  if (cachedEntry.expiresAt <= Date.now()) {
+    userSearchCache.delete(cacheKey);
+    return null;
+  }
+
+  userSearchCache.delete(cacheKey);
+  userSearchCache.set(cacheKey, cachedEntry);
+  return cachedEntry.users;
+}
+
+function writeCachedUserSearch(cacheKey: string, users: UserPickerOption[]) {
+  userSearchCache.set(cacheKey, {
+    users,
+    expiresAt: Date.now() + USER_SEARCH_CACHE_TTL_MS,
+  });
+
+  while (userSearchCache.size > USER_SEARCH_CACHE_LIMIT) {
+    const oldestKey = userSearchCache.keys().next().value;
+
+    if (!oldestKey) {
+      break;
+    }
+
+    userSearchCache.delete(oldestKey);
+  }
+}
+
 function mergeUniqueOptions(options: UserPickerOption[]): UserPickerOption[] {
   const seen = new Set<string>();
 
@@ -146,13 +193,27 @@ export function AsyncUserPicker({
       return;
     }
 
+    const normalizedQuery = query.trim();
+    const cacheKey = buildUserSearchCacheKey(searchUrl, normalizedQuery);
+    const cachedUsers = readCachedUserSearch(cacheKey);
+
+    if (cachedUsers) {
+      setLoadedOptions(
+        mergeUniqueOptions([...(cachedUsers ?? []), ...(selectedSnapshot ? [selectedSnapshot] : [])])
+      );
+      setHasLoadedOnce(true);
+      setIsLoading(false);
+      setLoadError(false);
+      return;
+    }
+
     const controller = new AbortController();
     const debounce = window.setTimeout(async () => {
       setIsLoading(true);
       setLoadError(false);
 
       try {
-        const response = await fetch(`${searchUrl}?q=${encodeURIComponent(query.trim())}`, {
+        const response = await fetch(`${searchUrl}?q=${encodeURIComponent(normalizedQuery)}`, {
           method: "GET",
           cache: "no-store",
           signal: controller.signal,
@@ -163,8 +224,11 @@ export function AsyncUserPicker({
         }
 
         const data = (await response.json()) as SearchResponse;
+        const users = data.users ?? [];
+
+        writeCachedUserSearch(cacheKey, users);
         setLoadedOptions(
-          mergeUniqueOptions([...(data.users ?? []), ...(selectedSnapshot ? [selectedSnapshot] : [])])
+          mergeUniqueOptions([...users, ...(selectedSnapshot ? [selectedSnapshot] : [])])
         );
         setHasLoadedOnce(true);
       } catch (error) {

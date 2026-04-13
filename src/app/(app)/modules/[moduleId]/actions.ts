@@ -1,7 +1,7 @@
 "use server";
 
 import { Role } from "@prisma/client";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getServerSession } from "next-auth";
 
 import {
@@ -12,6 +12,7 @@ import {
   saveAssessmentMarkerAssignment,
 } from "@/lib/assessment-team";
 import { authOptions } from "@/lib/auth";
+import { getModuleArchivedAssessmentsTag } from "@/lib/cache-tags";
 import { inviteUser } from "@/lib/user-invitations";
 import { prisma } from "@/lib/prisma";
 
@@ -278,6 +279,7 @@ export async function archiveAssessmentAction(input: {
     revalidatePath(`/modules/${moduleId}`);
     revalidatePath("/dashboard");
     revalidatePath("/dashboard/timeline");
+    revalidateTag(getModuleArchivedAssessmentsTag(moduleId), "max");
     for (const assessmentInstance of template.assessmentInstances) {
       revalidatePath(`/modules/${moduleId}/assessments/${assessmentInstance.id}`);
     }
